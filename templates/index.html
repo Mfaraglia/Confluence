@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Restaurant Vendor Price Comparison</title>
+  <style>
+    :root {
+      --bg: #f7f8fb;
+      --card: #ffffff;
+      --border: #d7deea;
+      --text: #1f2937;
+      --muted: #4b5563;
+      --accent: #2563eb;
+      --success-bg: #e8f8ee;
+      --success-text: #10683c;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 24px;
+    }
+
+    .page {
+      max-width: 1050px;
+      margin: 0 auto;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 24px;
+      box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 1.8rem;
+      color: var(--accent);
+    }
+
+    .subtitle {
+      margin: 0 0 20px;
+      color: var(--muted);
+      font-size: 1rem;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 760px;
+    }
+
+    th, td {
+      border: 1px solid var(--border);
+      padding: 12px;
+      text-align: left;
+      font-size: 0.95rem;
+    }
+
+    th {
+      background: #eef2ff;
+      color: #1e3a8a;
+      font-weight: 700;
+    }
+
+    tr:nth-child(even) td {
+      background: #fbfcff;
+    }
+
+    .price {
+      font-variant-numeric: tabular-nums;
+    }
+
+    .cheapest {
+      background: var(--success-bg) !important;
+      color: var(--success-text);
+      font-weight: 700;
+    }
+
+    .vendor-tag {
+      font-weight: 700;
+      color: var(--success-text);
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <h1>Restaurant Vendor Price Comparison</h1>
+    <p class="subtitle">Compare vendor pricing across Sysco, US Foods, and PFG CustomerFirst</p>
+
+    <div class="table-wrap">
+      <table id="comparison-table" aria-label="Vendor pricing comparison">
+        <thead>
+          <tr>
+            <th>Product Description</th>
+            <th>Sysco Price</th>
+            <th>US Foods Price</th>
+            <th>PFG Price</th>
+            <th>Cheapest Vendor</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in products %}
+          <tr>
+            <td>{{ item.product }}</td>
+            <td class="price" data-vendor="Sysco" data-price="{{ item.sysco }}">${{ "%.2f"|format(item.sysco) }}</td>
+            <td class="price" data-vendor="US Foods" data-price="{{ item.us_foods }}">${{ "%.2f"|format(item.us_foods) }}</td>
+            <td class="price" data-vendor="PFG" data-price="{{ item.pfg }}">${{ "%.2f"|format(item.pfg) }}</td>
+            <td class="cheapest-vendor"></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </main>
+
+  <script>
+    const rows = document.querySelectorAll("#comparison-table tbody tr");
+
+    rows.forEach((row) => {
+      const priceCells = row.querySelectorAll(".price");
+      let cheapestCell = null;
+      let lowestPrice = Number.POSITIVE_INFINITY;
+
+      priceCells.forEach((cell) => {
+        const value = parseFloat(cell.dataset.price);
+        if (value < lowestPrice) {
+          lowestPrice = value;
+          cheapestCell = cell;
+        }
+      });
+
+      if (cheapestCell) {
+        cheapestCell.classList.add("cheapest");
+        const vendorOutput = row.querySelector(".cheapest-vendor");
+        vendorOutput.innerHTML = `<span class="vendor-tag">${cheapestCell.dataset.vendor}</span>`;
+      }
+    });
+  </script>
+</body>
+</html>
