@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Restaurant Vendor Price Comparison</title>
+  <style>
+    :root {
+      --bg: #f7f8fb;
+      --card: #ffffff;
+      --border: #d7deea;
+      --text: #1f2937;
+      --muted: #4b5563;
+      --accent: #2563eb;
+      --error-bg: #fdecec;
+      --error-text: #991b1b;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 24px;
+    }
+
+    .page {
+      max-width: 1100px;
+      margin: 0 auto;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 24px;
+      box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 1.8rem;
+      color: var(--accent);
+    }
+
+    .subtitle {
+      margin: 0 0 18px;
+      color: var(--muted);
+      font-size: 1rem;
+    }
+
+    .instructions {
+      margin: 0 0 18px;
+      color: var(--text);
+      background: #f3f6ff;
+      border: 1px solid #dbe4ff;
+      border-radius: 8px;
+      padding: 12px;
+      font-size: 0.95rem;
+    }
+
+    .upload-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .upload-card {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      background: #fff;
+    }
+
+    label {
+      display: block;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    input[type="file"] {
+      width: 100%;
+    }
+
+    .actions {
+      margin-bottom: 18px;
+    }
+
+    button {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 10px 14px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button:hover {
+      filter: brightness(0.95);
+    }
+
+    .errors {
+      margin-bottom: 16px;
+      background: var(--error-bg);
+      color: var(--error-text);
+      border: 1px solid #f5c2c2;
+      border-radius: 8px;
+      padding: 12px;
+    }
+
+    .errors ul {
+      margin: 8px 0 0;
+      padding-left: 18px;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 850px;
+    }
+
+    th, td {
+      border: 1px solid var(--border);
+      padding: 10px;
+      text-align: left;
+      font-size: 0.94rem;
+    }
+
+    th {
+      background: #eef2ff;
+      color: #1e3a8a;
+      font-weight: 700;
+    }
+
+    tr:nth-child(even) td {
+      background: #fbfcff;
+    }
+
+    .muted {
+      color: var(--muted);
+      font-style: italic;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <h1>Restaurant Vendor Price Comparison</h1>
+    <p class="subtitle">Compare vendor pricing across Sysco, US Foods, and PFG CustomerFirst</p>
+
+    <p class="instructions">
+      Upload CSV files from one or more vendors. Your file should include columns like description, item number, pack size, and price.
+      If description or price is missing, the app will show a friendly message.
+    </p>
+
+    <form method="POST" enctype="multipart/form-data">
+      <div class="upload-grid">
+        <div class="upload-card">
+          <label for="sysco_file">Upload Sysco CSV</label>
+          <input id="sysco_file" type="file" name="sysco_file" accept=".csv">
+        </div>
+
+        <div class="upload-card">
+          <label for="usfoods_file">Upload US Foods CSV</label>
+          <input id="usfoods_file" type="file" name="usfoods_file" accept=".csv">
+        </div>
+
+        <div class="upload-card">
+          <label for="pfg_file">Upload PFG CSV</label>
+          <input id="pfg_file" type="file" name="pfg_file" accept=".csv">
+        </div>
+      </div>
+
+      <div class="actions">
+        <button type="submit">Upload and Show Data</button>
+      </div>
+    </form>
+
+    {% if errors %}
+      <div class="errors" role="alert">
+        <strong>Please fix the following:</strong>
+        <ul>
+          {% for error in errors %}
+            <li>{{ error }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+
+    <div class="table-wrap">
+      <table aria-label="Uploaded vendor rows">
+        <thead>
+          <tr>
+            <th>Vendor</th>
+            <th>Product Description</th>
+            <th>Item Number</th>
+            <th>Pack Size</th>
+            <th>Price</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if rows %}
+            {% for row in rows %}
+              <tr>
+                <td>{{ row.vendor }}</td>
+                <td>{{ row.description }}</td>
+                <td>{{ row.item_number or "-" }}</td>
+                <td>{{ row.pack_size or "-" }}</td>
+                <td>{{ row.price }}</td>
+              </tr>
+            {% endfor %}
+          {% else %}
+            <tr>
+              <td colspan="5">No uploaded rows yet. Upload one or more vendor CSV files to see data here.</td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+
+    <p class="muted">Tip: This prototype lists uploaded rows as-is and does not match products between vendors yet.</p>
+  </main>
+</body>
+</html>
