@@ -1,20 +1,25 @@
 # Restaurant Vendor Price Comparison (Prototype)
 
-This is a beginner-friendly Flask web app for uploading and viewing vendor CSV data.
+This is a beginner-friendly Flask web app.
+You upload CSV files from Sysco, US Foods, and PFG, and the app builds one comparison table.
 
-## What this version does
-- Shows one page in your browser.
-- Lets you upload up to 3 CSV files:
-  - Sysco
-  - US Foods
-  - PFG
-- Reads each uploaded CSV and displays the rows in one simple table.
-- Shows a friendly error message if a CSV is missing a **description** column or a **price** column.
-- Does **not** match products across vendors yet (it just lists rows as uploaded).
+## What changed in this version
+- The app still has 3 upload areas (Sysco, US Foods, PFG).
+- After upload, it now **combines data into one table**.
+- It matches products by **product description only** (simple first step).
+- It shows these columns:
+  - Product Description
+  - Sysco Price
+  - US Foods Price
+  - PFG Price
+  - Cheapest Vendor
+- If a product is missing from one vendor, that vendor price is left blank.
+- It highlights the cheapest available vendor price in each row.
+- If a CSV is missing description or price columns, it shows a friendly error message.
 
 ---
 
-## Project structure (what each file does)
+## Project structure (simple)
 
 ```text
 Confluence/
@@ -26,59 +31,63 @@ Confluence/
 ```
 
 ### `app.py`
-- This is the backend server.
-- It receives file uploads from the form.
-- It reads CSV files safely.
-- It checks for required columns (description + price).
-- It sends the uploaded rows and any error messages to the page.
+- Backend server.
+- Handles file uploads.
+- Reads CSV files.
+- Validates required columns.
+- Combines rows by product description.
+- Calculates cheapest vendor.
 
 ### `templates/index.html`
-- This is the single web page.
-- It shows:
-  - title + subtitle
-  - 3 upload areas (Sysco, US Foods, PFG)
-  - upload button
-  - error messages
-  - uploaded data table
-- It also contains simple CSS styling.
+- Single web page.
+- Shows upload form and comparison table.
+- Highlights cheapest price cell with basic styling.
 
 ### `requirements.txt`
-- Lists required Python packages.
-- Only Flask is required.
+- Python package list.
+- Only Flask is needed.
 
 ### `README.md`
-- Explains how to run and use the app.
+- Setup and usage instructions.
 
 ---
 
-## CSV format (simple guidance)
-Your CSV should have a header row with column names.
+## CSV file guidance
+Use normal CSV files with a header row.
 
-The app looks for names like:
-- Description column: `description`, `product description`, `item description`, `product`, `name`
-- Price column: `price`, `unit price`, `cost`, `net price`
-- Optional columns: item number, pack size
+The app looks for description column names like:
+- `description`
+- `product description`
+- `item description`
+- `product`
+- `name`
+
+The app looks for price column names like:
+- `price`
+- `unit price`
+- `cost`
+- `net price`
 
 ### Example CSV
 ```csv
-description,item number,pack size,price
-Chicken Breast,1001,40 lb,128.50
-French Fries,2002,6/5 lb,40.95
+description,price
+Chicken Breast,128.50
+French Fries,40.95
 ```
 
 ---
 
-## Step-by-step: run on your computer
+## How to run (step by step)
 
 ## 1) Install Python
-- Install Python 3.10 or newer from: https://www.python.org/downloads/
-- On Windows, check **"Add Python to PATH"** during install.
+- Install Python 3.10+ from: https://www.python.org/downloads/
+- On Windows, check **"Add Python to PATH"**.
 
-## 2) Open a terminal in this project folder
+## 2) Open terminal in this project folder
 - Windows: PowerShell or Command Prompt
 - Mac/Linux: Terminal
 
-## 3) Create and activate a virtual environment (recommended)
+## 3) (Recommended) Create and activate virtual environment
 
 ### Windows (PowerShell)
 ```powershell
@@ -102,7 +111,7 @@ pip install -r requirements.txt
 python app.py
 ```
 
-## 6) Open in browser
+## 6) Open browser
 Go to:
 
 ```text
@@ -111,16 +120,15 @@ http://127.0.0.1:5000
 
 ---
 
-## How to use the app
-1. Click **Upload Sysco CSV**, **Upload US Foods CSV**, and/or **Upload PFG CSV**.
-2. Choose CSV files from your computer.
-3. Click **Upload and Show Data**.
-4. Review rows in the table.
-5. If a required column is missing, read the friendly error message and fix your CSV.
+## How to use
+1. Upload Sysco CSV, US Foods CSV, and/or PFG CSV.
+2. Click **Upload and Compare Prices**.
+3. Review the combined table.
+4. Check the highlighted cheapest price and cheapest vendor column.
 
 ---
 
-## What is intentionally NOT included yet
+## What is not included yet (on purpose)
 - Login
 - Chatbot
 - Automation

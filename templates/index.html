@@ -14,6 +14,8 @@
       --accent: #2563eb;
       --error-bg: #fdecec;
       --error-text: #991b1b;
+      --success-bg: #e8f8ee;
+      --success-text: #10683c;
     }
 
     * { box-sizing: border-box; }
@@ -78,13 +80,9 @@
       margin-bottom: 8px;
     }
 
-    input[type="file"] {
-      width: 100%;
-    }
+    input[type="file"] { width: 100%; }
 
-    .actions {
-      margin-bottom: 18px;
-    }
+    .actions { margin-bottom: 18px; }
 
     button {
       background: var(--accent);
@@ -94,10 +92,6 @@
       padding: 10px 14px;
       font-weight: 700;
       cursor: pointer;
-    }
-
-    button:hover {
-      filter: brightness(0.95);
     }
 
     .errors {
@@ -114,9 +108,7 @@
       padding-left: 18px;
     }
 
-    .table-wrap {
-      overflow-x: auto;
-    }
+    .table-wrap { overflow-x: auto; }
 
     table {
       width: 100%;
@@ -141,6 +133,12 @@
       background: #fbfcff;
     }
 
+    .cheapest {
+      background: var(--success-bg) !important;
+      color: var(--success-text);
+      font-weight: 700;
+    }
+
     .muted {
       color: var(--muted);
       font-style: italic;
@@ -154,8 +152,8 @@
     <p class="subtitle">Compare vendor pricing across Sysco, US Foods, and PFG CustomerFirst</p>
 
     <p class="instructions">
-      Upload CSV files from one or more vendors. Your file should include columns like description, item number, pack size, and price.
-      If description or price is missing, the app will show a friendly message.
+      Upload CSV files from one or more vendors. The app combines rows by <strong>product description</strong>, shows prices side by side,
+      and marks the cheapest available vendor.
     </p>
 
     <form method="POST" enctype="multipart/form-data">
@@ -164,20 +162,17 @@
           <label for="sysco_file">Upload Sysco CSV</label>
           <input id="sysco_file" type="file" name="sysco_file" accept=".csv">
         </div>
-
         <div class="upload-card">
           <label for="usfoods_file">Upload US Foods CSV</label>
           <input id="usfoods_file" type="file" name="usfoods_file" accept=".csv">
         </div>
-
         <div class="upload-card">
           <label for="pfg_file">Upload PFG CSV</label>
           <input id="pfg_file" type="file" name="pfg_file" accept=".csv">
         </div>
       </div>
-
       <div class="actions">
-        <button type="submit">Upload and Show Data</button>
+        <button type="submit">Upload and Compare Prices</button>
       </div>
     </form>
 
@@ -193,37 +188,37 @@
     {% endif %}
 
     <div class="table-wrap">
-      <table aria-label="Uploaded vendor rows">
+      <table aria-label="Vendor comparison table">
         <thead>
           <tr>
-            <th>Vendor</th>
             <th>Product Description</th>
-            <th>Item Number</th>
-            <th>Pack Size</th>
-            <th>Price</th>
+            <th>Sysco Price</th>
+            <th>US Foods Price</th>
+            <th>PFG Price</th>
+            <th>Cheapest Vendor</th>
           </tr>
         </thead>
         <tbody>
           {% if rows %}
             {% for row in rows %}
               <tr>
-                <td>{{ row.vendor }}</td>
                 <td>{{ row.description }}</td>
-                <td>{{ row.item_number or "-" }}</td>
-                <td>{{ row.pack_size or "-" }}</td>
-                <td>{{ row.price }}</td>
+                <td class="{% if row.cheapest_vendor == 'Sysco' %}cheapest{% endif %}">{{ row.sysco }}</td>
+                <td class="{% if row.cheapest_vendor == 'US Foods' %}cheapest{% endif %}">{{ row.us_foods }}</td>
+                <td class="{% if row.cheapest_vendor == 'PFG' %}cheapest{% endif %}">{{ row.pfg }}</td>
+                <td>{{ row.cheapest_vendor }}</td>
               </tr>
             {% endfor %}
           {% else %}
             <tr>
-              <td colspan="5">No uploaded rows yet. Upload one or more vendor CSV files to see data here.</td>
+              <td colspan="5">No comparison data yet. Upload one or more vendor CSV files to build the table.</td>
             </tr>
           {% endif %}
         </tbody>
       </table>
     </div>
 
-    <p class="muted">Tip: This prototype lists uploaded rows as-is and does not match products between vendors yet.</p>
+    <p class="muted">Note: This version matches rows by product description only.</p>
   </main>
 </body>
 </html>
