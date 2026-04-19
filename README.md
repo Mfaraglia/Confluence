@@ -13,6 +13,12 @@ You upload CSV files from Sysco, US Foods, and PFG, and the app builds one compa
   - first 3 parsed rows
   - parser path used (`normal` or `fallback used`)
   - detected delimiter
+- It now supports **manual column mapping** when headers are not obvious:
+  - Product Description
+  - Item Number
+  - Pack Size
+  - Price
+  The dropdowns show the actual headers from that vendor file.
 - It includes an **Upload Debug Summary** at the top after submit, so you can confirm Flask actually received each file.
   It shows the request method, `request.files` keys, and per-vendor received status.
 - File upload wiring was fixed and verified:
@@ -96,6 +102,12 @@ For each uploaded file, the app:
    - item number
    - pack size
    - price
+
+### Manual mapping flow
+If the app cannot confidently find required columns, it shows a mapping form for that vendor.
+1. Pick which CSV header should be used for Product Description, Item Number, Pack Size, and Price.
+2. Click **Apply Column Mapping**.
+3. The app rebuilds the comparison table using your selections.
 
 ### Example CSV
 ```csv

@@ -81,6 +81,11 @@
     }
 
     input[type="file"] { width: 100%; }
+    select {
+      width: 100%;
+      padding: 6px;
+      margin-bottom: 10px;
+    }
 
     .actions { margin-bottom: 18px; }
 
@@ -204,6 +209,7 @@
 
     <!-- multipart/form-data is required for file uploads -->
     <form method="POST" enctype="multipart/form-data">
+      <input type="hidden" name="action" value="upload">
       <div class="upload-grid">
         <div class="upload-card">
           <label for="sysco_file">Upload Sysco CSV</label>
@@ -236,6 +242,60 @@
       </section>
     {% endif %}
 
+    {% if show_mapping_form %}
+      <section class="debug" aria-label="Manual column mapping">
+        <h2>Manual Column Mapping</h2>
+        <p class="muted">
+          We could not confidently find all required columns for one or more files.
+          Please map the columns below, then click <strong>Apply Column Mapping</strong>.
+        </p>
+        <form method="POST">
+          <input type="hidden" name="action" value="apply_mapping">
+          <input type="hidden" name="upload_id" value="{{ upload_id }}">
+          {% for vendor_key, option in mapping_options.items() %}
+            <div class="debug-card">
+              <p><strong>{{ option.vendor_name }}</strong></p>
+              {% set headers = option.headers %}
+              {% set selected = option.selected %}
+
+              <label for="{{ vendor_key }}_description">Product Description</label>
+              <select id="{{ vendor_key }}_description" name="{{ vendor_key }}_description">
+                <option value="">-- Select a column --</option>
+                {% for header in headers %}
+                  <option value="{{ header }}" {% if header == selected.description %}selected{% endif %}>{{ header }}</option>
+                {% endfor %}
+              </select>
+
+              <label for="{{ vendor_key }}_item_number">Item Number</label>
+              <select id="{{ vendor_key }}_item_number" name="{{ vendor_key }}_item_number">
+                <option value="">-- Select a column --</option>
+                {% for header in headers %}
+                  <option value="{{ header }}" {% if header == selected.item_number %}selected{% endif %}>{{ header }}</option>
+                {% endfor %}
+              </select>
+
+              <label for="{{ vendor_key }}_pack_size">Pack Size</label>
+              <select id="{{ vendor_key }}_pack_size" name="{{ vendor_key }}_pack_size">
+                <option value="">-- Select a column --</option>
+                {% for header in headers %}
+                  <option value="{{ header }}" {% if header == selected.pack_size %}selected{% endif %}>{{ header }}</option>
+                {% endfor %}
+              </select>
+
+              <label for="{{ vendor_key }}_price">Price</label>
+              <select id="{{ vendor_key }}_price" name="{{ vendor_key }}_price">
+                <option value="">-- Select a column --</option>
+                {% for header in headers %}
+                  <option value="{{ header }}" {% if header == selected.price %}selected{% endif %}>{{ header }}</option>
+                {% endfor %}
+              </select>
+            </div>
+          {% endfor %}
+          <button type="submit">Apply Column Mapping</button>
+        </form>
+      </section>
+    {% endif %}
+
     {% if errors %}
       <div class="errors" role="alert">
         <strong>Please fix the following:</strong>
@@ -257,6 +317,12 @@
             <p><strong>File uploaded:</strong> {{ "Yes" if detail.uploaded else "No" }}</p>
             <p><strong>Parser path:</strong> {{ detail.parser_path }}</p>
             <p><strong>Detected delimiter:</strong> {{ detail.delimiter if detail.delimiter else "N/A" }}</p>
+            <p><strong>Selected columns:</strong>
+              description={{ detail.selected_columns.description if detail.selected_columns else "none" }},
+              item_number={{ detail.selected_columns.item_number if detail.selected_columns else "none" }},
+              pack_size={{ detail.selected_columns.pack_size if detail.selected_columns else "none" }},
+              price={{ detail.selected_columns.price if detail.selected_columns else "none" }}
+            </p>
             <p><strong>Detected headers:</strong>
               {% if detail.headers %}
                 {{ detail.headers|join(", ") }}

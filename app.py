@@ -1,11 +1,19 @@
 import csv
 import io
 import re
+import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
-from flask import Flask, render_template, request
+from flask import Flask, render_template, request, session
 
 app = Flask(__name__)
+app.secret_key = "dev-secret-key-change-me"
+
+# Simple in-memory cache for uploaded CSV text between two submits:
+# 1) upload file(s)
+# 2) apply manual column mapping
+# This keeps the app beginner-friendly without adding a database.
+UPLOAD_CACHE: Dict[str, Dict[str, str]] = {}
 
 # These lists hold common header names we might see in vendor CSV files.
 DESCRIPTION_KEYS = [
@@ -88,30 +96,24 @@ def split_single_column_row(single_value: str) -> Dict[str, str]:
     }
 
 
-# Read one vendor CSV file and return parsed rows + friendly errors + debug details.
-def parse_vendor_csv(
-    vendor_name: str, uploaded_file
+# Parse one vendor CSV text and return parsed rows + friendly errors + debug details.
+# mapping lets the user choose columns manually when headers vary across exports.
+def parse_vendor_text(
+    vendor_name: str, text: str, mapping: Optional[Dict[str, str]] = None
 ) -> Tuple[List[Dict[str, Optional[float]]], List[str], Dict[str, Any]]:
     debug_info: Dict[str, Any] = {
         "vendor": vendor_name,
-        "uploaded": uploaded_file is not None and uploaded_file.filename != "",
+        "uploaded": bool(text.strip()),
         "headers": [],
         "sample_rows": [],
         "parser_path": "not used",
         "delimiter": "",
+        "selected_columns": {},
+        "mapping_needed": False,
     }
-
-    if uploaded_file is None or uploaded_file.filename == "":
-        return [], [], debug_info
 
     errors: List[str] = []
     rows: List[Dict[str, Optional[float]]] = []
-
-    try:
-        text = uploaded_file.read().decode("utf-8-sig")
-    except UnicodeDecodeError:
-        debug_info["parser_path"] = "normal"
-        return [], [f"{vendor_name}: Please upload a UTF-8 CSV file."], debug_info
 
     if not text.strip():
         debug_info["parser_path"] = "normal"
@@ -134,15 +136,29 @@ def parse_vendor_csv(
     item_col = pick_column(reader.fieldnames, ITEM_NUMBER_KEYS)
     pack_col = pick_column(reader.fieldnames, PACK_SIZE_KEYS)
 
+    # If user provided manual mapping, use those selections.
+    # If not, use automatic guesses.
+    if mapping:
+        desc_col = mapping.get("description") or desc_col
+        item_col = mapping.get("item_number") or item_col
+        pack_col = mapping.get("pack_size") or pack_col
+        price_col = mapping.get("price") or price_col
+
+    debug_info["selected_columns"] = {
+        "description": desc_col or "",
+        "item_number": item_col or "",
+        "pack_size": pack_col or "",
+        "price": price_col or "",
+    }
+
     if not desc_col:
-        errors.append(
-            f"{vendor_name}: Missing a description column. Try 'description' or 'product description'."
-        )
+        errors.append(f"{vendor_name}: Please choose a Product Description column.")
     if not price_col:
-        errors.append(f"{vendor_name}: Missing a price column. Try 'price' or 'unit price'.")
+        errors.append(f"{vendor_name}: Please choose a Price column.")
 
     if errors:
         debug_info["parser_path"] = "normal"
+        debug_info["mapping_needed"] = True
         return [], errors, debug_info
 
     used_fallback = False
@@ -194,6 +210,42 @@ def parse_vendor_csv(
 
     debug_info["parser_path"] = "fallback used" if used_fallback else "normal"
     return rows, [], debug_info
+
+
+# Read one uploaded file and route into parse_vendor_text.
+def parse_vendor_csv(
+    vendor_name: str, uploaded_file, mapping: Optional[Dict[str, str]] = None
+) -> Tuple[List[Dict[str, Optional[float]]], List[str], Dict[str, Any], str]:
+    if uploaded_file is None or uploaded_file.filename == "":
+        debug_info = {
+            "vendor": vendor_name,
+            "uploaded": False,
+            "headers": [],
+            "sample_rows": [],
+            "parser_path": "not used",
+            "delimiter": "",
+            "selected_columns": {},
+            "mapping_needed": False,
+        }
+        return [], [], debug_info, ""
+
+    try:
+        text = uploaded_file.read().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        debug_info = {
+            "vendor": vendor_name,
+            "uploaded": True,
+            "headers": [],
+            "sample_rows": [],
+            "parser_path": "normal",
+            "delimiter": "",
+            "selected_columns": {},
+            "mapping_needed": False,
+        }
+        return [], [f"{vendor_name}: Please upload a UTF-8 CSV file."], debug_info, ""
+
+    rows, errors, debug_info = parse_vendor_text(vendor_name, text, mapping)
+    return rows, errors, debug_info, text
 
 
 # Combine rows from all vendors using a cleaned description key.
@@ -273,6 +325,9 @@ def index():
     comparison_rows: List[Dict[str, str]] = []
     errors: List[str] = []
     debug_details: List[Dict[str, Any]] = []
+    mapping_options: Dict[str, Any] = {}
+    show_mapping_form = False
+    upload_id = ""
     upload_debug: Dict[str, Any] = {
         "request_method": request.method,
         "files_keys": [],
@@ -285,6 +340,8 @@ def index():
 
     if request.method == "POST":
         all_vendor_rows: List[Dict[str, Optional[float]]] = []
+        action = request.form.get("action", "upload")
+        upload_id = request.form.get("upload_id", "")
 
         # File uploads require multipart/form-data in the HTML form.
         # If the form is not multipart, request.files will be empty.
@@ -300,23 +357,95 @@ def index():
         upload_debug["received"]["US Foods"] = bool(usfoods_file and usfoods_file.filename)
         upload_debug["received"]["PFG"] = bool(pfg_file and pfg_file.filename)
 
-        vendors = [
-            ("Sysco", sysco_file),
-            ("US Foods", usfoods_file),
-            ("PFG", pfg_file),
+        vendor_keys = [
+            ("Sysco", "sysco_file", "sysco"),
+            ("US Foods", "usfoods_file", "usfoods"),
+            ("PFG", "pfg_file", "pfg"),
         ]
 
-        for vendor_name, file_obj in vendors:
-            rows, file_errors, debug_info = parse_vendor_csv(vendor_name, file_obj)
-            all_vendor_rows.extend(rows)
-            errors.extend(file_errors)
-            debug_details.append(debug_info)
+        # Step 1: user uploads files. We parse headers and store raw text for optional mapping step.
+        if action == "upload":
+            upload_id = str(uuid.uuid4())
+            UPLOAD_CACHE[upload_id] = {}
+            session["last_upload_id"] = upload_id
 
-        if not all_vendor_rows and not errors:
+            vendors = [
+                ("Sysco", sysco_file),
+                ("US Foods", usfoods_file),
+                ("PFG", pfg_file),
+            ]
+
+            for vendor_name, file_obj in vendors:
+                rows, file_errors, debug_info, file_text = parse_vendor_csv(vendor_name, file_obj)
+                all_vendor_rows.extend(rows)
+                errors.extend(file_errors)
+                debug_details.append(debug_info)
+
+                if file_text.strip():
+                    UPLOAD_CACHE[upload_id][vendor_name] = file_text
+
+                if debug_info.get("uploaded"):
+                    missing_required = not debug_info["selected_columns"].get("description") or not debug_info[
+                        "selected_columns"
+                    ].get("price")
+                    if missing_required:
+                        show_mapping_form = True
+                        vendor_key = next((key for name, _, key in vendor_keys if name == vendor_name), "")
+                        mapping_options[vendor_key] = {
+                            "vendor_name": vendor_name,
+                            "headers": debug_info.get("headers", []),
+                            "selected": debug_info.get("selected_columns", {}),
+                        }
+
+        # Step 2: user applies manual mapping. We parse from cached CSV text.
+        elif action == "apply_mapping":
+            if not upload_id:
+                upload_id = session.get("last_upload_id", "")
+            cached_vendor_files = UPLOAD_CACHE.get(upload_id, {})
+
+            for vendor_name, _, vendor_key in vendor_keys:
+                file_text = cached_vendor_files.get(vendor_name, "")
+                if not file_text:
+                    debug_details.append(
+                        {
+                            "vendor": vendor_name,
+                            "uploaded": False,
+                            "headers": [],
+                            "sample_rows": [],
+                            "parser_path": "not used",
+                            "delimiter": "",
+                            "selected_columns": {},
+                            "mapping_needed": False,
+                        }
+                    )
+                    continue
+
+                mapping = {
+                    "description": request.form.get(f"{vendor_key}_description", ""),
+                    "item_number": request.form.get(f"{vendor_key}_item_number", ""),
+                    "pack_size": request.form.get(f"{vendor_key}_pack_size", ""),
+                    "price": request.form.get(f"{vendor_key}_price", ""),
+                }
+                rows, file_errors, debug_info = parse_vendor_text(vendor_name, file_text, mapping)
+                all_vendor_rows.extend(rows)
+                errors.extend(file_errors)
+                debug_details.append(debug_info)
+
+                if debug_info.get("mapping_needed"):
+                    show_mapping_form = True
+                    mapping_options[vendor_key] = {
+                        "vendor_name": vendor_name,
+                        "headers": debug_info.get("headers", []),
+                        "selected": debug_info.get("selected_columns", {}),
+                    }
+
+        if not all_vendor_rows and not errors and action == "upload":
             errors.append("Please upload at least one CSV file.")
 
-        if all_vendor_rows:
+        if all_vendor_rows and not show_mapping_form:
             comparison_rows = build_comparison_rows(all_vendor_rows)
+        elif show_mapping_form and not errors:
+            errors.append("Please choose manual column mappings, then click Apply Column Mapping.")
 
     return render_template(
         "index.html",
@@ -324,6 +453,9 @@ def index():
         errors=errors,
         debug_details=debug_details,
         upload_debug=upload_debug,
+        show_mapping_form=show_mapping_form,
+        mapping_options=mapping_options,
+        upload_id=upload_id,
     )
 
 
