@@ -43,15 +43,78 @@ TERM_REPLACEMENTS = {
     "chk": "chicken",
     "chkn": "chicken",
     "brst": "breast",
+    "dbl": "double",
     "bnlss": "boneless",
+    "bnls": "boneless",
+    "sknls": "skinless",
+    "b/s": "boneless skinless",
     "grnd": "ground",
     "bf": "beef",
     "mozz": "mozzarella",
     "shrd": "shredded",
     "frz": "frozen",
+    "fz": "frozen",
     "ff": "french fries",
+    "hvy": "heavy",
+    "tff": "trans fat free",
+    "ntrsbst": "nonthermostabilized",
+    "cont": "container",
+    "cmpt": "compartment",
+    "whi": "white",
+    "hngd": "hinged",
+    "lg": "large",
+    "slvr": "silver source",
+    "src": "source",
+    "applwd": "applewood",
+    "ref": "refrigerated",
+    "fc": "fully cooked",
+    "slcd": "sliced",
+    "shrd": "shredded",
 }
-WEAK_TOKENS = {"lb", "lbs", "fresh", "frozen", "pack", "size"}
+WEAK_TOKENS = {
+    "lb",
+    "lbs",
+    "fresh",
+    "frozen",
+    "raw",
+    "refrigerated",
+    "vac",
+    "bag",
+    "box",
+    "pack",
+    "count",
+    "whole",
+    "stage",
+    "grade",
+    "fancy",
+    "premium",
+    "source",
+    "west",
+    "creek",
+    "silver",
+    "mark",
+}
+ATTRIBUTE_TERMS = {
+    "boneless",
+    "skinless",
+    "heavy",
+    "whipping",
+    "whipped",
+    "hinged",
+    "white",
+    "diced",
+    "smoked",
+    "double",
+    "fully",
+    "cooked",
+    "sliced",
+    "shredded",
+    "trans",
+    "fat",
+    "free",
+    "nonthermostabilized",
+}
+SIZE_UNIT_TOKENS = {"oz", "lb", "lbs", "ct", "count", "percent", "cmpt", "compartment"}
 
 
 # Convert text to lowercase and trim spaces so header matching is easier.
@@ -87,6 +150,9 @@ def parse_price_to_float(price_text: str) -> Optional[float]:
 # 4) apply a few small word-order fixes
 def clean_description_for_match(description: str) -> str:
     text = (description or "").lower().strip()
+
+    # Handle known slash-style shorthand before punctuation cleanup.
+    text = text.replace("b/s", " boneless skinless ")
 
     # Convert pound shorthand (#) into lb before punctuation cleanup.
     text = re.sub(r"#", " lb ", text)
@@ -133,18 +199,48 @@ def token_overlap_score(tokens_a: List[str], tokens_b: List[str]) -> float:
     return overlap / max(len(set_a), len(set_b))
 
 
-def split_core_and_size_tokens(tokens: List[str]) -> Tuple[List[str], List[str]]:
+def split_core_attribute_size_tokens(tokens: List[str]) -> Tuple[List[str], List[str], List[str]]:
     core_tokens: List[str] = []
+    attribute_tokens: List[str] = []
     size_tokens: List[str] = []
 
     for token in tokens:
         # Treat quantity/size-like values as lower-priority signals.
-        if token in WEAK_TOKENS or token.isdigit():
+        if token.isdigit() or token in SIZE_UNIT_TOKENS or re.search(r"\d", token):
             size_tokens.append(token)
+        elif token in ATTRIBUTE_TERMS:
+            attribute_tokens.append(token)
+        elif token in WEAK_TOKENS:
+            continue
         else:
             core_tokens.append(token)
 
-    return core_tokens, size_tokens
+    return core_tokens, attribute_tokens, size_tokens
+
+
+def detect_family_alias(core_tokens: List[str], attribute_tokens: List[str]) -> str:
+    core = set(core_tokens)
+    attr = set(attribute_tokens)
+
+    if {"chicken", "breast"}.issubset(core):
+        return "chicken breast"
+    if {"chicken", "wing"}.issubset(core):
+        return "chicken wing"
+    if "cream" in core and ("heavy" in attr or "whipping" in attr):
+        return "heavy whipping cream"
+    if {"avocado", "hass"}.issubset(core):
+        return "avocado hass"
+    if "bacon" in core and "sliced" in attr:
+        return "bacon sliced"
+    if {"foam", "container"}.issubset(core):
+        return "foam container"
+    if {"french", "fries"}.issubset(core):
+        return "french fries"
+    if {"mozzarella", "cheese"}.issubset(core):
+        return "mozzarella cheese"
+    if {"cheddar", "cheese"}.issubset(core):
+        return "cheddar cheese"
+    return ""
 
 
 def choose_clearer_description(current: str, candidate: str) -> str:
@@ -321,7 +417,9 @@ def parse_vendor_text(
             "normalized_description": clean_description_for_match(description),
             "final_tokens": build_meaningful_tokens(clean_description_for_match(description)),
             "core_tokens": [],
+            "attribute_tokens": [],
             "size_tokens": [],
+            "match_confidence": 0.0,
             "final_group_key": "",
         }
 
@@ -337,7 +435,9 @@ def parse_vendor_text(
                     "normalized_description": parsed_row["normalized_description"],
                     "final_tokens": parsed_row["final_tokens"],
                     "core_tokens": parsed_row["core_tokens"],
+                    "attribute_tokens": parsed_row["attribute_tokens"],
                     "size_tokens": parsed_row["size_tokens"],
+                    "match_confidence": parsed_row["match_confidence"],
                     "final_group_key": parsed_row["final_group_key"],
                 }
             )
@@ -405,7 +505,8 @@ def build_comparison_rows(
             row.get("normalized_description") or clean_description_for_match(original_description)
         )
         tokens = build_meaningful_tokens(normalized_description)
-        core_tokens, size_tokens = split_core_and_size_tokens(tokens)
+        core_tokens, attribute_tokens, size_tokens = split_core_attribute_size_tokens(tokens)
+        family_alias = detect_family_alias(core_tokens, attribute_tokens)
 
         # Find best existing group using:
         # - core token overlap (primary signal)
@@ -414,37 +515,51 @@ def build_comparison_rows(
         best_key = ""
         best_score = 0.0
         best_core_overlap = 0.0
+        best_attribute_overlap = 0.0
         best_size_overlap = 0.0
         best_similarity = 0.0
+        best_alias_bonus = 0.0
 
         for group_key, group_data in combined.items():
             group_core_tokens = list(group_data["core_tokens"])
+            group_attribute_tokens = list(group_data["attribute_tokens"])
             group_size_tokens = list(group_data["size_tokens"])
             core_overlap = token_overlap_score(core_tokens, group_core_tokens)
+            attribute_overlap = token_overlap_score(attribute_tokens, group_attribute_tokens)
             size_overlap = token_overlap_score(size_tokens, group_size_tokens)
             similarity = SequenceMatcher(None, normalized_description, group_data["normalized"]).ratio()
-            score = (0.75 * core_overlap) + (0.10 * size_overlap) + (0.15 * similarity)
+            alias_bonus = 1.0 if family_alias and family_alias == group_data.get("family_alias", "") else 0.0
+            score = (
+                (0.55 * core_overlap)
+                + (0.25 * attribute_overlap)
+                + (0.10 * size_overlap)
+                + (0.10 * alias_bonus)
+            )
 
             if score > best_score:
                 best_score = score
                 best_key = group_key
                 best_core_overlap = core_overlap
+                best_attribute_overlap = attribute_overlap
                 best_size_overlap = size_overlap
                 best_similarity = similarity
+                best_alias_bonus = alias_bonus
 
         # Match when products are "close enough" by simple thresholds.
         # Core words drive grouping; size words are only secondary.
+        match_confidence = best_score
         should_match_existing = (
             best_key != ""
             and (
-                best_core_overlap >= 0.60
-                or (best_core_overlap >= 0.40 and best_similarity >= 0.72)
-                or (best_core_overlap == 0 and best_similarity >= 0.90)
-                or (best_core_overlap >= 0.50 and best_size_overlap >= 0.20)
+                (best_core_overlap >= 0.50 and best_attribute_overlap >= 0.30)
+                or (best_alias_bonus > 0 and best_core_overlap >= 0.35)
+                or (best_core_overlap >= 0.60)
+                or (best_core_overlap >= 0.40 and best_similarity >= 0.78)
             )
+            and match_confidence >= 0.62
         )
 
-        default_group_key = " ".join(core_tokens) if core_tokens else normalized_description
+        default_group_key = family_alias if family_alias else (" ".join(core_tokens) if core_tokens else normalized_description)
         final_group_key = best_key if should_match_existing else default_group_key
         if final_group_key == "":
             final_group_key = "(no description)"
@@ -454,7 +569,9 @@ def build_comparison_rows(
                 "display_description": original_description,
                 "normalized": normalized_description,
                 "core_tokens": set(core_tokens),
+                "attribute_tokens": set(attribute_tokens),
                 "size_tokens": set(size_tokens),
+                "family_alias": family_alias,
                 "sysco": None,
                 "us_foods": None,
                 "pfg": None,
@@ -466,10 +583,13 @@ def build_comparison_rows(
             )
             # Grow token sets with tokens seen in matched descriptions.
             combined[final_group_key]["core_tokens"].update(core_tokens)
+            combined[final_group_key]["attribute_tokens"].update(attribute_tokens)
             combined[final_group_key]["size_tokens"].update(size_tokens)
 
         row["core_tokens"] = core_tokens
+        row["attribute_tokens"] = attribute_tokens
         row["size_tokens"] = size_tokens
+        row["match_confidence"] = round(match_confidence, 2)
         row["final_group_key"] = final_group_key
         row["final_tokens"] = tokens
         match_debug_rows.append(
@@ -477,7 +597,9 @@ def build_comparison_rows(
                 "description": original_description,
                 "normalized_description": normalized_description,
                 "core_tokens": ", ".join(core_tokens),
+                "attribute_tokens": ", ".join(attribute_tokens),
                 "size_tokens": ", ".join(size_tokens),
+                "match_confidence": f"{match_confidence:.2f}",
                 "final_group_key": final_group_key,
             }
         )

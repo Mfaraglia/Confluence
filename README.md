@@ -11,20 +11,38 @@ You upload CSV files from Sysco, US Foods, and PFG, and the app builds one compa
 - Matching is now smarter with simple rule-based normalization for common foodservice abbreviations and wording:
   - `chk` / `chkn` → `chicken`
   - `brst` → `breast`
+  - `dbl` → `double`
+  - `b/s` or `bnls` → `boneless` (and `b/s` also expands to `skinless`)
+  - `sknls` → `skinless`
   - `bnlss` → `boneless`
   - `grnd` → `ground`
   - `bf` → `beef`
   - `mozz` → `mozzarella`
   - `shrd` → `shredded`
-  - `frz` → `frozen`
+  - `frz` / `fz` → `frozen`
+  - `hvy` → `heavy`
+  - `tff` → `trans fat free`
+  - `ntrsbst` → `nonthermostabilized`
+  - `cont` → `container`
+  - `cmpt` → `compartment`
+  - `whi` → `white`
+  - `hngd` → `hinged`
+  - `lg` → `large`
+  - `slvr src` → `silver source`
+  - `applwd` → `applewood`
+  - `ref` → `refrigerated`
+  - `fc` → `fully cooked`
+  - `slcd` → `sliced`
   - `ff` or `fries french` → `french fries`
   - `#` → `lb`
   It also applies a small order fix like `mozzarella shredded cheese` → `mozzarella cheese shredded`.
 - Matching now also uses **token-based similarity** (not just exact normalized text):
   - It splits normalized descriptions into tokens (words).
-  - It removes weak tokens such as `lb`, `lbs`, `fresh`, `frozen`, `pack`, and `size`.
-  - It compares products by meaningful token overlap.
-  - It uses a small text-similarity backup score (`difflib.SequenceMatcher`) to catch close matches.
+  - It removes weak tokens (for example: `raw`, `fresh`, `frozen`, `pack`, `source`, `west`, `creek`, `silver`, `mark`) so they do not control grouping.
+  - It separates tokens into `core_tokens`, `attribute_tokens`, and `size_tokens`.
+  - It groups mainly by core tokens, then attributes, and uses size tokens only as weaker support.
+  - It adds product-family aliases for common categories such as `chicken breast`, `heavy whipping cream`, `foam container`, `french fries`, and cheese types.
+  - It computes a simple match confidence score; high-confidence matches auto-group, low-confidence matches stay separate.
   - It now separates tokens into:
     - **core_tokens** (main food words, primary grouping signal)
     - **size_tokens** (pack/size-like words, secondary signal)
@@ -39,7 +57,9 @@ You upload CSV files from Sysco, US Foods, and PFG, and the app builds one compa
   - normalized description (used for matching)
 - It now includes a **Matching Debug** section showing for each parsed row:
   - core_tokens
+  - attribute_tokens
   - size_tokens
+  - match_confidence
   - final_group_key
 - It now supports **manual column mapping** when headers are not obvious:
   - Product Description
