@@ -27,6 +27,20 @@ PRICE_KEYS = ["price", "unit price", "cost", "net price"]
 ITEM_NUMBER_KEYS = ["item number", "item #", "item_no", "item no", "sku"]
 PACK_SIZE_KEYS = ["pack size", "pack", "size", "uom"]
 
+# Simple replacement rules for common foodservice abbreviations/variants.
+TERM_REPLACEMENTS = {
+    "chk": "chicken",
+    "chkn": "chicken",
+    "brst": "breast",
+    "bnlss": "boneless",
+    "grnd": "ground",
+    "bf": "beef",
+    "mozz": "mozzarella",
+    "shrd": "shredded",
+    "frz": "frozen",
+    "ff": "french fries",
+}
+
 
 # Convert text to lowercase and trim spaces so header matching is easier.
 def normalize(value: Optional[str]) -> str:
@@ -54,11 +68,33 @@ def parse_price_to_float(price_text: str) -> Optional[float]:
 
 
 # Build a simple cleaned description for matching similar products across files.
-# Rules: lowercase, trim spaces, collapse multiple spaces, remove common punctuation.
+# Rules:
+# 1) lowercase + trim
+# 2) convert common abbreviations to full words
+# 3) remove punctuation + normalize spaces
+# 4) apply a few small word-order fixes
 def clean_description_for_match(description: str) -> str:
     text = (description or "").lower().strip()
+
+    # Convert pound shorthand (#) into lb before punctuation cleanup.
+    text = re.sub(r"#", " lb ", text)
+
+    # Keep current punctuation/space cleanup behavior.
     text = re.sub(r"[,\.\-/()]", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
+
+    # Expand common abbreviations token-by-token.
+    expanded_tokens: List[str] = []
+    for token in text.split():
+        replacement = TERM_REPLACEMENTS.get(token, token)
+        expanded_tokens.extend(replacement.split())
+    text = " ".join(expanded_tokens)
+
+    # Small phrase/order fixes for common wording variations.
+    text = text.replace("fries french", "french fries")
+    text = text.replace("mozzarella shredded cheese", "mozzarella cheese shredded")
+    text = re.sub(r"\s+", " ", text).strip()
+
     return text
 
 
@@ -191,6 +227,7 @@ def parse_vendor_text(
             "item_number": item_number,
             "pack_size": pack_size,
             "price": parse_price_to_float(raw_price),
+            "normalized_description": clean_description_for_match(description),
         }
 
         # Save first 3 parsed rows so users can debug parsing behavior easily.
@@ -202,6 +239,7 @@ def parse_vendor_text(
                     "pack_size": pack_size,
                     "raw_price": raw_price,
                     "parsed_price": parsed_row["price"],
+                    "normalized_description": parsed_row["normalized_description"],
                 }
             )
 

@@ -8,11 +8,24 @@ You upload CSV files from Sysco, US Foods, and PFG, and the app builds one compa
 - After upload, it now **combines data into one table**.
 - Matching is now more flexible: before grouping, descriptions are cleaned by lowercasing, trimming spaces, collapsing repeated spaces, and removing punctuation like commas, periods, dashes, slashes, and parentheses.
 - It matches products using a **cleaned product description** (lowercase, trimmed spaces, multiple spaces collapsed, and common punctuation removed) so near-identical descriptions still group together.
+- Matching is now smarter with simple rule-based normalization for common foodservice abbreviations and wording:
+  - `chk` / `chkn` → `chicken`
+  - `brst` → `breast`
+  - `bnlss` → `boneless`
+  - `grnd` → `ground`
+  - `bf` → `beef`
+  - `mozz` → `mozzarella`
+  - `shrd` → `shredded`
+  - `frz` → `frozen`
+  - `ff` or `fries french` → `french fries`
+  - `#` → `lb`
+  It also applies a small order fix like `mozzarella shredded cheese` → `mozzarella cheese shredded`.
 - It now includes a simple **CSV Parse Debug** section after upload, showing for each vendor:
   - detected headers
   - first 3 parsed rows
   - parser path used (`normal` or `fallback used`)
   - detected delimiter
+  - normalized description (used for matching)
 - It now supports **manual column mapping** when headers are not obvious:
   - Product Description
   - Item Number
