@@ -25,6 +25,10 @@ You upload CSV files from Sysco, US Foods, and PFG, and the app builds one compa
   - It removes weak tokens such as `lb`, `lbs`, `fresh`, `frozen`, `pack`, and `size`.
   - It compares products by meaningful token overlap.
   - It uses a small text-similarity backup score (`difflib.SequenceMatcher`) to catch close matches.
+  - It now separates tokens into:
+    - **core_tokens** (main food words, primary grouping signal)
+    - **size_tokens** (pack/size-like words, secondary signal)
+  This helps group things like `FRIES FRENCH 6/5#`, `Frozen French Fries`, and `French Fries Frozen 6/5 lb` together.
 - It now includes a simple **CSV Parse Debug** section after upload, showing for each vendor:
   - detected headers
   - first 3 parsed rows
@@ -32,9 +36,9 @@ You upload CSV files from Sysco, US Foods, and PFG, and the app builds one compa
   - detected delimiter
   - normalized description (used for matching)
 - It now includes a **Matching Debug** section showing for each parsed row:
-  - normalized description
-  - final token list
-  - matched grouped key
+  - core_tokens
+  - size_tokens
+  - final_group_key
 - It now supports **manual column mapping** when headers are not obvious:
   - Product Description
   - Item Number

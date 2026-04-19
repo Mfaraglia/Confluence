@@ -363,8 +363,9 @@
             <li>
               original="{{ item.description }}",
               normalized="{{ item.normalized_description }}",
-              tokens="{{ item.final_tokens }}",
-              matched_group_key="{{ item.matched_group_key }}"
+              core_tokens="{{ item.core_tokens }}",
+              size_tokens="{{ item.size_tokens }}",
+              final_group_key="{{ item.final_group_key }}"
             </li>
           {% endfor %}
         </ul>

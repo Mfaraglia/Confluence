@@ -94,6 +94,8 @@ def clean_description_for_match(description: str) -> str:
 
     # Small phrase/order fixes for common wording variations.
     text = text.replace("fries french", "french fries")
+    text = text.replace("frozen french fries", "french fries")
+    text = text.replace("french fries frozen", "french fries")
     text = text.replace("mozzarella shredded cheese", "mozzarella cheese shredded")
     text = re.sub(r"\s+", " ", text).strip()
 
@@ -119,6 +121,26 @@ def token_overlap_score(tokens_a: List[str], tokens_b: List[str]) -> float:
     set_b = set(tokens_b)
     overlap = len(set_a & set_b)
     return overlap / max(len(set_a), len(set_b))
+
+
+def split_core_and_size_tokens(tokens: List[str]) -> Tuple[List[str], List[str]]:
+    core_tokens: List[str] = []
+    size_tokens: List[str] = []
+
+    for token in tokens:
+        # Treat quantity/size-like values as lower-priority signals.
+        if token in WEAK_TOKENS or token.isdigit():
+            size_tokens.append(token)
+        else:
+            core_tokens.append(token)
+
+    return core_tokens, size_tokens
+
+
+def choose_clearer_description(current: str, candidate: str) -> str:
+    # Simple readability rule:
+    # keep whichever description is longer (usually less abbreviated).
+    return candidate if len((candidate or "").strip()) > len((current or "").strip()) else current
 
 
 # Some uploads are messy and may parse poorly with the first attempt.
@@ -252,7 +274,9 @@ def parse_vendor_text(
             "price": parse_price_to_float(raw_price),
             "normalized_description": clean_description_for_match(description),
             "final_tokens": build_meaningful_tokens(clean_description_for_match(description)),
-            "matched_group_key": "",
+            "core_tokens": [],
+            "size_tokens": [],
+            "final_group_key": "",
         }
 
         # Save first 3 parsed rows so users can debug parsing behavior easily.
@@ -266,7 +290,9 @@ def parse_vendor_text(
                     "parsed_price": parsed_row["price"],
                     "normalized_description": parsed_row["normalized_description"],
                     "final_tokens": parsed_row["final_tokens"],
-                    "matched_group_key": parsed_row["matched_group_key"],
+                    "core_tokens": parsed_row["core_tokens"],
+                    "size_tokens": parsed_row["size_tokens"],
+                    "final_group_key": parsed_row["final_group_key"],
                 }
             )
 
@@ -329,62 +355,80 @@ def build_comparison_rows(
             row.get("normalized_description") or clean_description_for_match(original_description)
         )
         tokens = build_meaningful_tokens(normalized_description)
+        core_tokens, size_tokens = split_core_and_size_tokens(tokens)
 
         # Find best existing group using:
-        # - token overlap score
-        # - text similarity score (SequenceMatcher ratio)
+        # - core token overlap (primary signal)
+        # - size token overlap (secondary signal)
+        # - text similarity score (backup signal)
         best_key = ""
         best_score = 0.0
-        best_overlap = 0.0
+        best_core_overlap = 0.0
+        best_size_overlap = 0.0
         best_similarity = 0.0
 
         for group_key, group_data in combined.items():
-            group_tokens = list(group_data["tokens"])
-            overlap = token_overlap_score(tokens, group_tokens)
+            group_core_tokens = list(group_data["core_tokens"])
+            group_size_tokens = list(group_data["size_tokens"])
+            core_overlap = token_overlap_score(core_tokens, group_core_tokens)
+            size_overlap = token_overlap_score(size_tokens, group_size_tokens)
             similarity = SequenceMatcher(None, normalized_description, group_data["normalized"]).ratio()
-            score = (0.7 * overlap) + (0.3 * similarity)
+            score = (0.75 * core_overlap) + (0.10 * size_overlap) + (0.15 * similarity)
 
             if score > best_score:
                 best_score = score
                 best_key = group_key
-                best_overlap = overlap
+                best_core_overlap = core_overlap
+                best_size_overlap = size_overlap
                 best_similarity = similarity
 
         # Match when products are "close enough" by simple thresholds.
+        # Core words drive grouping; size words are only secondary.
         should_match_existing = (
             best_key != ""
             and (
-                best_overlap >= 0.60
-                or (best_overlap >= 0.40 and best_similarity >= 0.75)
-                or best_similarity >= 0.88
+                best_core_overlap >= 0.60
+                or (best_core_overlap >= 0.40 and best_similarity >= 0.72)
+                or (best_core_overlap == 0 and best_similarity >= 0.90)
+                or (best_core_overlap >= 0.50 and best_size_overlap >= 0.20)
             )
         )
 
-        match_key = best_key if should_match_existing else normalized_description
-        if match_key == "":
-            match_key = "(no description)"
+        default_group_key = " ".join(core_tokens) if core_tokens else normalized_description
+        final_group_key = best_key if should_match_existing else default_group_key
+        if final_group_key == "":
+            final_group_key = "(no description)"
 
-        if match_key not in combined:
-            combined[match_key] = {
+        if final_group_key not in combined:
+            combined[final_group_key] = {
                 "display_description": original_description,
                 "normalized": normalized_description,
-                "tokens": set(tokens),
+                "core_tokens": set(core_tokens),
+                "size_tokens": set(size_tokens),
                 "sysco": None,
                 "us_foods": None,
                 "pfg": None,
             }
         else:
-            # Grow token set with tokens seen in matched descriptions.
-            combined[match_key]["tokens"].update(tokens)
+            # Keep the clearest human-readable label among matched rows.
+            combined[final_group_key]["display_description"] = choose_clearer_description(
+                str(combined[final_group_key]["display_description"]), original_description
+            )
+            # Grow token sets with tokens seen in matched descriptions.
+            combined[final_group_key]["core_tokens"].update(core_tokens)
+            combined[final_group_key]["size_tokens"].update(size_tokens)
 
-        row["matched_group_key"] = match_key
+        row["core_tokens"] = core_tokens
+        row["size_tokens"] = size_tokens
+        row["final_group_key"] = final_group_key
         row["final_tokens"] = tokens
         match_debug_rows.append(
             {
                 "description": original_description,
                 "normalized_description": normalized_description,
-                "final_tokens": ", ".join(tokens),
-                "matched_group_key": match_key,
+                "core_tokens": ", ".join(core_tokens),
+                "size_tokens": ", ".join(size_tokens),
+                "final_group_key": final_group_key,
             }
         )
 
@@ -393,18 +437,18 @@ def build_comparison_rows(
 
         # If duplicate products exist in one vendor file, keep the lowest price for simplicity.
         if vendor == "Sysco":
-            current = combined[match_key]["sysco"]
-            combined[match_key]["sysco"] = (
+            current = combined[final_group_key]["sysco"]
+            combined[final_group_key]["sysco"] = (
                 price if current is None or (price is not None and price < current) else current
             )
         elif vendor == "US Foods":
-            current = combined[match_key]["us_foods"]
-            combined[match_key]["us_foods"] = (
+            current = combined[final_group_key]["us_foods"]
+            combined[final_group_key]["us_foods"] = (
                 price if current is None or (price is not None and price < current) else current
             )
         elif vendor == "PFG":
-            current = combined[match_key]["pfg"]
-            combined[match_key]["pfg"] = (
+            current = combined[final_group_key]["pfg"]
+            combined[final_group_key]["pfg"] = (
                 price if current is None or (price is not None and price < current) else current
             )
 
