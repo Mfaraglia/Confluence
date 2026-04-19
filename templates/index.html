@@ -352,6 +352,25 @@
       </section>
     {% endif %}
 
+    {% if match_debug_rows %}
+      <section class="debug" aria-label="Matching debug details">
+        <h2>Matching Debug (Token-Based)</h2>
+        <p class="muted">
+          This shows how each parsed row was normalized, tokenized, and assigned to a grouped key.
+        </p>
+        <ul class="debug-list">
+          {% for item in match_debug_rows %}
+            <li>
+              original="{{ item.description }}",
+              normalized="{{ item.normalized_description }}",
+              tokens="{{ item.final_tokens }}",
+              matched_group_key="{{ item.matched_group_key }}"
+            </li>
+          {% endfor %}
+        </ul>
+      </section>
+    {% endif %}
+
     <div class="table-wrap">
       <table aria-label="Vendor comparison table">
         <thead>

@@ -2,6 +2,7 @@ import csv
 import io
 import re
 import uuid
+from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional, Tuple
 
 from flask import Flask, render_template, request, session
@@ -40,6 +41,7 @@ TERM_REPLACEMENTS = {
     "frz": "frozen",
     "ff": "french fries",
 }
+WEAK_TOKENS = {"lb", "lbs", "fresh", "frozen", "pack", "size"}
 
 
 # Convert text to lowercase and trim spaces so header matching is easier.
@@ -96,6 +98,27 @@ def clean_description_for_match(description: str) -> str:
     text = re.sub(r"\s+", " ", text).strip()
 
     return text
+
+
+# Turn normalized description into meaningful tokens for matching.
+# We remove weak words that do not help identify the core product.
+def build_meaningful_tokens(normalized_description: str) -> List[str]:
+    tokens = [token for token in (normalized_description or "").split() if token not in WEAK_TOKENS]
+    # Remove duplicates but keep order for easier debug reading.
+    unique_tokens: List[str] = []
+    for token in tokens:
+        if token not in unique_tokens:
+            unique_tokens.append(token)
+    return unique_tokens
+
+
+def token_overlap_score(tokens_a: List[str], tokens_b: List[str]) -> float:
+    if not tokens_a or not tokens_b:
+        return 0.0
+    set_a = set(tokens_a)
+    set_b = set(tokens_b)
+    overlap = len(set_a & set_b)
+    return overlap / max(len(set_a), len(set_b))
 
 
 # Some uploads are messy and may parse poorly with the first attempt.
@@ -228,6 +251,8 @@ def parse_vendor_text(
             "pack_size": pack_size,
             "price": parse_price_to_float(raw_price),
             "normalized_description": clean_description_for_match(description),
+            "final_tokens": build_meaningful_tokens(clean_description_for_match(description)),
+            "matched_group_key": "",
         }
 
         # Save first 3 parsed rows so users can debug parsing behavior easily.
@@ -240,6 +265,8 @@ def parse_vendor_text(
                     "raw_price": raw_price,
                     "parsed_price": parsed_row["price"],
                     "normalized_description": parsed_row["normalized_description"],
+                    "final_tokens": parsed_row["final_tokens"],
+                    "matched_group_key": parsed_row["matched_group_key"],
                 }
             )
 
@@ -286,30 +313,80 @@ def parse_vendor_csv(
     return rows, errors, debug_info, text
 
 
-# Combine rows from all vendors using a cleaned description key.
-def build_comparison_rows(rows: List[Dict[str, Optional[float]]]) -> List[Dict[str, str]]:
-    combined: Dict[str, Dict[str, Optional[float]]] = {}
+# Combine rows from all vendors using token-overlap + similarity matching.
+def build_comparison_rows(
+    rows: List[Dict[str, Optional[float]]],
+) -> Tuple[List[Dict[str, str]], List[Dict[str, str]]]:
+    combined: Dict[str, Dict[str, Any]] = {}
+    match_debug_rows: List[Dict[str, str]] = []
 
     for row in rows:
         original_description = (row.get("description") or "").strip()
         if original_description == "":
             original_description = "(No description)"
 
-        # This cleaned key lets "Chicken-Breast", "chicken breast", and
-        # "Chicken Breast" match into one row.
-        match_key = clean_description_for_match(original_description)
+        normalized_description = str(
+            row.get("normalized_description") or clean_description_for_match(original_description)
+        )
+        tokens = build_meaningful_tokens(normalized_description)
+
+        # Find best existing group using:
+        # - token overlap score
+        # - text similarity score (SequenceMatcher ratio)
+        best_key = ""
+        best_score = 0.0
+        best_overlap = 0.0
+        best_similarity = 0.0
+
+        for group_key, group_data in combined.items():
+            group_tokens = list(group_data["tokens"])
+            overlap = token_overlap_score(tokens, group_tokens)
+            similarity = SequenceMatcher(None, normalized_description, group_data["normalized"]).ratio()
+            score = (0.7 * overlap) + (0.3 * similarity)
+
+            if score > best_score:
+                best_score = score
+                best_key = group_key
+                best_overlap = overlap
+                best_similarity = similarity
+
+        # Match when products are "close enough" by simple thresholds.
+        should_match_existing = (
+            best_key != ""
+            and (
+                best_overlap >= 0.60
+                or (best_overlap >= 0.40 and best_similarity >= 0.75)
+                or best_similarity >= 0.88
+            )
+        )
+
+        match_key = best_key if should_match_existing else normalized_description
         if match_key == "":
             match_key = "(no description)"
 
-        # Create one combined row the first time we see this match key.
-        # We keep the first readable/original description for the table display.
         if match_key not in combined:
             combined[match_key] = {
                 "display_description": original_description,
+                "normalized": normalized_description,
+                "tokens": set(tokens),
                 "sysco": None,
                 "us_foods": None,
                 "pfg": None,
             }
+        else:
+            # Grow token set with tokens seen in matched descriptions.
+            combined[match_key]["tokens"].update(tokens)
+
+        row["matched_group_key"] = match_key
+        row["final_tokens"] = tokens
+        match_debug_rows.append(
+            {
+                "description": original_description,
+                "normalized_description": normalized_description,
+                "final_tokens": ", ".join(tokens),
+                "matched_group_key": match_key,
+            }
+        )
 
         vendor = row.get("vendor")
         price = row.get("price")
@@ -333,9 +410,7 @@ def build_comparison_rows(rows: List[Dict[str, Optional[float]]]) -> List[Dict[s
 
     output: List[Dict[str, str]] = []
 
-    for _, prices in sorted(
-        combined.items(), key=lambda item: item[1]["display_description"].lower()
-    ):
+    for _, prices in sorted(combined.items(), key=lambda item: item[1]["display_description"].lower()):
         vendor_prices = {
             "Sysco": prices["sysco"],
             "US Foods": prices["us_foods"],
@@ -355,12 +430,13 @@ def build_comparison_rows(rows: List[Dict[str, Optional[float]]]) -> List[Dict[s
             }
         )
 
-    return output
+    return output, match_debug_rows
 
 
 @app.route("/", methods=["GET", "POST"])
 def index():
     comparison_rows: List[Dict[str, str]] = []
+    match_debug_rows: List[Dict[str, str]] = []
     errors: List[str] = []
     debug_details: List[Dict[str, Any]] = []
     mapping_options: Dict[str, Any] = {}
@@ -481,7 +557,7 @@ def index():
             errors.append("Please upload at least one CSV file.")
 
         if all_vendor_rows and not show_mapping_form:
-            comparison_rows = build_comparison_rows(all_vendor_rows)
+            comparison_rows, match_debug_rows = build_comparison_rows(all_vendor_rows)
         elif show_mapping_form and not errors:
             errors.append("Please choose manual column mappings, then click Apply Column Mapping.")
 
@@ -490,6 +566,7 @@ def index():
         rows=comparison_rows,
         errors=errors,
         debug_details=debug_details,
+        match_debug_rows=match_debug_rows,
         upload_debug=upload_debug,
         show_mapping_form=show_mapping_form,
         mapping_options=mapping_options,

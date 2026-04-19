@@ -20,12 +20,21 @@ You upload CSV files from Sysco, US Foods, and PFG, and the app builds one compa
   - `ff` or `fries french` → `french fries`
   - `#` → `lb`
   It also applies a small order fix like `mozzarella shredded cheese` → `mozzarella cheese shredded`.
+- Matching now also uses **token-based similarity** (not just exact normalized text):
+  - It splits normalized descriptions into tokens (words).
+  - It removes weak tokens such as `lb`, `lbs`, `fresh`, `frozen`, `pack`, and `size`.
+  - It compares products by meaningful token overlap.
+  - It uses a small text-similarity backup score (`difflib.SequenceMatcher`) to catch close matches.
 - It now includes a simple **CSV Parse Debug** section after upload, showing for each vendor:
   - detected headers
   - first 3 parsed rows
   - parser path used (`normal` or `fallback used`)
   - detected delimiter
   - normalized description (used for matching)
+- It now includes a **Matching Debug** section showing for each parsed row:
+  - normalized description
+  - final token list
+  - matched grouped key
 - It now supports **manual column mapping** when headers are not obvious:
   - Product Description
   - Item Number
