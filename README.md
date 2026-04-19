@@ -8,6 +8,14 @@ You upload CSV files from Sysco, US Foods, and PFG, and the app builds one compa
 - After upload, it now **combines data into one table**.
 - Matching is now more flexible: before grouping, descriptions are cleaned by lowercasing, trimming spaces, collapsing repeated spaces, and removing punctuation like commas, periods, dashes, slashes, and parentheses.
 - It matches products using a **cleaned product description** (lowercase, trimmed spaces, multiple spaces collapsed, and common punctuation removed) so near-identical descriptions still group together.
+- It now includes a simple **CSV Parse Debug** section after upload, showing for each vendor:
+  - detected headers
+  - first 3 parsed rows
+  - parser path used (`normal` or `fallback used`)
+  - detected delimiter
+- It now safely handles messy rows where a full CSV line gets stuck in one column.
+  In that case, it manually splits into:
+  `description, item_number, pack_size, price`.
 - It shows these columns:
   - Product Description
   - Sysco Price
@@ -36,6 +44,8 @@ Confluence/
 - Handles file uploads.
 - Reads CSV files.
 - Validates required columns.
+- Detects delimiter when possible (comma, semicolon, tab, or pipe).
+- Includes a safe fallback split for rows that were parsed into one field.
 - Combines rows using a cleaned description key, while still showing the original readable description.
 - Calculates cheapest vendor.
 
@@ -68,6 +78,17 @@ The app looks for price column names like:
 - `unit price`
 - `cost`
 - `net price`
+
+### Parser flow (simple)
+For each uploaded file, the app:
+1. Reads the file as text.
+2. Tries to detect the delimiter.
+3. Parses with Python's `csv` module.
+4. If a row is parsed as one field but still contains a full comma-separated line, it safely splits into:
+   - description
+   - item number
+   - pack size
+   - price
 
 ### Example CSV
 ```csv

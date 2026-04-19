@@ -144,6 +144,38 @@
       font-style: italic;
       margin-top: 8px;
     }
+
+    .debug {
+      margin: 18px 0;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      background: #f8fafc;
+    }
+
+    .debug h2 {
+      margin: 0 0 10px;
+      font-size: 1.1rem;
+    }
+
+    .debug-card {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+      padding: 10px;
+      margin-bottom: 10px;
+    }
+
+    .debug-card p {
+      margin: 6px 0;
+      font-size: 0.92rem;
+    }
+
+    .debug-list {
+      margin: 6px 0 0;
+      padding-left: 18px;
+      font-size: 0.9rem;
+    }
   </style>
 </head>
 <body>
@@ -185,6 +217,44 @@
           {% endfor %}
         </ul>
       </div>
+    {% endif %}
+
+    {% if debug_details %}
+      <section class="debug" aria-label="CSV debug details">
+        <h2>CSV Parse Debug</h2>
+        <p class="muted">After each upload, this section shows what the parser detected for each vendor file.</p>
+        {% for detail in debug_details %}
+          <div class="debug-card">
+            <p><strong>Vendor:</strong> {{ detail.vendor }}</p>
+            <p><strong>File uploaded:</strong> {{ "Yes" if detail.uploaded else "No" }}</p>
+            <p><strong>Parser path:</strong> {{ detail.parser_path }}</p>
+            <p><strong>Detected delimiter:</strong> {{ detail.delimiter if detail.delimiter else "N/A" }}</p>
+            <p><strong>Detected headers:</strong>
+              {% if detail.headers %}
+                {{ detail.headers|join(", ") }}
+              {% else %}
+                none
+              {% endif %}
+            </p>
+            <p><strong>First 3 parsed rows:</strong></p>
+            {% if detail.sample_rows %}
+              <ul class="debug-list">
+                {% for sample in detail.sample_rows %}
+                  <li>
+                    description="{{ sample.description }}",
+                    item_number="{{ sample.item_number }}",
+                    pack_size="{{ sample.pack_size }}",
+                    raw_price="{{ sample.raw_price }}",
+                    parsed_price="{{ sample.parsed_price }}"
+                  </li>
+                {% endfor %}
+              </ul>
+            {% else %}
+              <p class="muted">No parsed rows available.</p>
+            {% endif %}
+          </div>
+        {% endfor %}
+      </section>
     {% endif %}
 
     <div class="table-wrap">
