@@ -6,7 +6,8 @@ You upload CSV files from Sysco, US Foods, and PFG, and the app builds one compa
 ## What changed in this version
 - The app still has 3 upload areas (Sysco, US Foods, PFG).
 - After upload, it now **combines data into one table**.
-- It matches products by **product description only** (simple first step).
+- Matching is now more flexible: before grouping, descriptions are cleaned by lowercasing, trimming spaces, collapsing repeated spaces, and removing punctuation like commas, periods, dashes, slashes, and parentheses.
+- It matches products using a **cleaned product description** (lowercase, trimmed spaces, multiple spaces collapsed, and common punctuation removed) so near-identical descriptions still group together.
 - It shows these columns:
   - Product Description
   - Sysco Price
@@ -35,7 +36,7 @@ Confluence/
 - Handles file uploads.
 - Reads CSV files.
 - Validates required columns.
-- Combines rows by product description.
+- Combines rows using a cleaned description key, while still showing the original readable description.
 - Calculates cheapest vendor.
 
 ### `templates/index.html`

@@ -152,8 +152,8 @@
     <p class="subtitle">Compare vendor pricing across Sysco, US Foods, and PFG CustomerFirst</p>
 
     <p class="instructions">
-      Upload CSV files from one or more vendors. The app combines rows by <strong>product description</strong>, shows prices side by side,
-      and marks the cheapest available vendor.
+      Upload CSV files from one or more vendors. The app uses a cleaned product description for matching (so small punctuation/case differences still match),
+      shows prices side by side, and marks the cheapest available vendor.
     </p>
 
     <form method="POST" enctype="multipart/form-data">
@@ -218,7 +218,7 @@
       </table>
     </div>
 
-    <p class="muted">Note: This version matches rows by product description only.</p>
+    <p class="muted">Note: This version matches by a cleaned description (lowercase + spaces normalized + punctuation removed).</p>
   </main>
 </body>
 </html>

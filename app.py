@@ -1,5 +1,6 @@
 import csv
 import io
+import re
 from typing import Dict, List, Optional, Tuple
 
 from flask import Flask, render_template, request
@@ -40,6 +41,15 @@ def parse_price_to_float(price_text: str) -> Optional[float]:
         return float(cleaned)
     except ValueError:
         return None
+
+
+# Build a simple cleaned description for matching similar products across files.
+# Rules: lowercase, trim spaces, collapse multiple spaces, remove common punctuation.
+def clean_description_for_match(description: str) -> str:
+    text = (description or "").lower().strip()
+    text = re.sub(r"[,\.\-/()]", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
 
 
 # Read one vendor CSV file and return rows (description + price only) plus friendly errors.
@@ -97,18 +107,26 @@ def parse_vendor_csv(vendor_name: str, uploaded_file) -> Tuple[List[Dict[str, Op
     return rows, []
 
 
-# Combine rows from all vendors by product description only.
+# Combine rows from all vendors using a cleaned description key.
 def build_comparison_rows(rows: List[Dict[str, Optional[float]]]) -> List[Dict[str, str]]:
     combined: Dict[str, Dict[str, Optional[float]]] = {}
 
     for row in rows:
-        description = (row.get("description") or "").strip()
-        if description == "":
-            description = "(No description)"
+        original_description = (row.get("description") or "").strip()
+        if original_description == "":
+            original_description = "(No description)"
 
-        # Create a new comparison row the first time we see this description.
-        if description not in combined:
-            combined[description] = {
+        # This cleaned key lets "Chicken-Breast", "chicken breast", and
+        # "Chicken Breast" match into one row.
+        match_key = clean_description_for_match(original_description)
+        if match_key == "":
+            match_key = "(no description)"
+
+        # Create one combined row the first time we see this match key.
+        # We keep the first readable/original description for the table display.
+        if match_key not in combined:
+            combined[match_key] = {
+                "display_description": original_description,
                 "sysco": None,
                 "us_foods": None,
                 "pfg": None,
@@ -119,18 +137,26 @@ def build_comparison_rows(rows: List[Dict[str, Optional[float]]]) -> List[Dict[s
 
         # If duplicate products exist in one vendor file, keep the lowest price for simplicity.
         if vendor == "Sysco":
-            current = combined[description]["sysco"]
-            combined[description]["sysco"] = price if current is None or (price is not None and price < current) else current
+            current = combined[match_key]["sysco"]
+            combined[match_key]["sysco"] = (
+                price if current is None or (price is not None and price < current) else current
+            )
         elif vendor == "US Foods":
-            current = combined[description]["us_foods"]
-            combined[description]["us_foods"] = price if current is None or (price is not None and price < current) else current
+            current = combined[match_key]["us_foods"]
+            combined[match_key]["us_foods"] = (
+                price if current is None or (price is not None and price < current) else current
+            )
         elif vendor == "PFG":
-            current = combined[description]["pfg"]
-            combined[description]["pfg"] = price if current is None or (price is not None and price < current) else current
+            current = combined[match_key]["pfg"]
+            combined[match_key]["pfg"] = (
+                price if current is None or (price is not None and price < current) else current
+            )
 
     output: List[Dict[str, str]] = []
 
-    for description, prices in sorted(combined.items(), key=lambda x: x[0].lower()):
+    for _, prices in sorted(
+        combined.items(), key=lambda item: item[1]["display_description"].lower()
+    ):
         vendor_prices = {
             "Sysco": prices["sysco"],
             "US Foods": prices["us_foods"],
@@ -142,7 +168,7 @@ def build_comparison_rows(rows: List[Dict[str, Optional[float]]]) -> List[Dict[s
 
         output.append(
             {
-                "description": description,
+                "description": str(prices["display_description"]),
                 "sysco": f"${prices['sysco']:.2f}" if prices["sysco"] is not None else "",
                 "us_foods": f"${prices['us_foods']:.2f}" if prices["us_foods"] is not None else "",
                 "pfg": f"${prices['pfg']:.2f}" if prices["pfg"] is not None else "",
