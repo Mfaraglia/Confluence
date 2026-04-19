@@ -14,6 +14,7 @@ You upload CSV files from Sysco, US Foods, and PFG, and the app builds one compa
   - parser path used (`normal` or `fallback used`)
   - detected delimiter
 - It includes an **Upload Debug Summary** at the top after submit, so you can confirm Flask actually received each file.
+  It shows the request method, `request.files` keys, and per-vendor received status.
 - File upload wiring was fixed and verified:
   - form uses `method="POST"`
   - form uses `enctype="multipart/form-data"`

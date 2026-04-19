@@ -228,7 +228,6 @@
         <strong>Upload Debug Summary</strong>
         <ul>
           <li><strong>Request method:</strong> {{ upload_debug.request_method }}</li>
-          <li><strong>request.form keys:</strong> {{ upload_debug.form_keys|join(", ") if upload_debug.form_keys else "none" }}</li>
           <li><strong>request.files keys:</strong> {{ upload_debug.files_keys|join(", ") if upload_debug.files_keys else "none" }}</li>
           <li><strong>Flask received Sysco file:</strong> {{ "Yes" if upload_debug.received["Sysco"] else "No" }}</li>
           <li><strong>Flask received US Foods file:</strong> {{ "Yes" if upload_debug.received["US Foods"] else "No" }}</li>

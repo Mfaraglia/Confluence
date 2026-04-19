@@ -275,7 +275,6 @@ def index():
     debug_details: List[Dict[str, Any]] = []
     upload_debug: Dict[str, Any] = {
         "request_method": request.method,
-        "form_keys": [],
         "files_keys": [],
         "received": {
             "Sysco": False,
@@ -289,7 +288,6 @@ def index():
 
         # File uploads require multipart/form-data in the HTML form.
         # If the form is not multipart, request.files will be empty.
-        upload_debug["form_keys"] = list(request.form.keys())
         upload_debug["files_keys"] = list(request.files.keys())
 
         # IMPORTANT: request.files names must exactly match the HTML input name attributes.
