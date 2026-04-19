@@ -176,6 +176,20 @@
       padding-left: 18px;
       font-size: 0.9rem;
     }
+
+    .debug-summary {
+      margin: 14px 0;
+      border: 1px solid #c9d7ff;
+      border-radius: 8px;
+      background: #eef4ff;
+      padding: 12px;
+      font-size: 0.92rem;
+    }
+
+    .debug-summary ul {
+      margin: 8px 0 0;
+      padding-left: 18px;
+    }
   </style>
 </head>
 <body>
@@ -188,6 +202,7 @@
       shows prices side by side, and marks the cheapest available vendor.
     </p>
 
+    <!-- multipart/form-data is required for file uploads -->
     <form method="POST" enctype="multipart/form-data">
       <div class="upload-grid">
         <div class="upload-card">
@@ -207,6 +222,20 @@
         <button type="submit">Upload and Compare Prices</button>
       </div>
     </form>
+
+    {% if upload_debug.request_method == "POST" %}
+      <section class="debug-summary" aria-label="Upload debug summary">
+        <strong>Upload Debug Summary</strong>
+        <ul>
+          <li><strong>Request method:</strong> {{ upload_debug.request_method }}</li>
+          <li><strong>request.form keys:</strong> {{ upload_debug.form_keys|join(", ") if upload_debug.form_keys else "none" }}</li>
+          <li><strong>request.files keys:</strong> {{ upload_debug.files_keys|join(", ") if upload_debug.files_keys else "none" }}</li>
+          <li><strong>Flask received Sysco file:</strong> {{ "Yes" if upload_debug.received["Sysco"] else "No" }}</li>
+          <li><strong>Flask received US Foods file:</strong> {{ "Yes" if upload_debug.received["US Foods"] else "No" }}</li>
+          <li><strong>Flask received PFG file:</strong> {{ "Yes" if upload_debug.received["PFG"] else "No" }}</li>
+        </ul>
+      </section>
+    {% endif %}
 
     {% if errors %}
       <div class="errors" role="alert">

@@ -273,14 +273,39 @@ def index():
     comparison_rows: List[Dict[str, str]] = []
     errors: List[str] = []
     debug_details: List[Dict[str, Any]] = []
+    upload_debug: Dict[str, Any] = {
+        "request_method": request.method,
+        "form_keys": [],
+        "files_keys": [],
+        "received": {
+            "Sysco": False,
+            "US Foods": False,
+            "PFG": False,
+        },
+    }
 
     if request.method == "POST":
         all_vendor_rows: List[Dict[str, Optional[float]]] = []
 
+        # File uploads require multipart/form-data in the HTML form.
+        # If the form is not multipart, request.files will be empty.
+        upload_debug["form_keys"] = list(request.form.keys())
+        upload_debug["files_keys"] = list(request.files.keys())
+
+        # IMPORTANT: request.files names must exactly match the HTML input name attributes.
+        # Example: <input name="sysco_file"> must be read with request.files.get("sysco_file").
+        sysco_file = request.files.get("sysco_file")
+        usfoods_file = request.files.get("usfoods_file")
+        pfg_file = request.files.get("pfg_file")
+
+        upload_debug["received"]["Sysco"] = bool(sysco_file and sysco_file.filename)
+        upload_debug["received"]["US Foods"] = bool(usfoods_file and usfoods_file.filename)
+        upload_debug["received"]["PFG"] = bool(pfg_file and pfg_file.filename)
+
         vendors = [
-            ("Sysco", request.files.get("sysco_file")),
-            ("US Foods", request.files.get("usfoods_file")),
-            ("PFG", request.files.get("pfg_file")),
+            ("Sysco", sysco_file),
+            ("US Foods", usfoods_file),
+            ("PFG", pfg_file),
         ]
 
         for vendor_name, file_obj in vendors:
@@ -300,6 +325,7 @@ def index():
         rows=comparison_rows,
         errors=errors,
         debug_details=debug_details,
+        upload_debug=upload_debug,
     )
 
 

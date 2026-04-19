@@ -13,6 +13,12 @@ You upload CSV files from Sysco, US Foods, and PFG, and the app builds one compa
   - first 3 parsed rows
   - parser path used (`normal` or `fallback used`)
   - detected delimiter
+- It includes an **Upload Debug Summary** at the top after submit, so you can confirm Flask actually received each file.
+- File upload wiring was fixed and verified:
+  - form uses `method="POST"`
+  - form uses `enctype="multipart/form-data"`
+  - all 3 file inputs and the submit button are inside the same form
+  - backend reads `request.files` with matching names: `sysco_file`, `usfoods_file`, `pfg_file`
 - It now safely handles messy rows where a full CSV line gets stuck in one column.
   In that case, it manually splits into:
   `description, item_number, pack_size, price`.
