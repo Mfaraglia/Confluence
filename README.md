@@ -34,6 +34,8 @@ You upload CSV files from Sysco, US Foods, and PFG, and the app builds one compa
   - first 3 parsed rows
   - parser path used (`normal` or `fallback used`)
   - detected delimiter
+  - header row chosen
+  - rows skipped before table
   - normalized description (used for matching)
 - It now includes a **Matching Debug** section showing for each parsed row:
   - core_tokens
@@ -122,8 +124,9 @@ The app looks for price column names like:
 For each uploaded file, the app:
 1. Reads the file as text.
 2. Tries to detect the delimiter.
-3. Parses with Python's `csv` module.
-4. If a row is parsed as one field but still contains a full comma-separated line, it safely splits into:
+3. Scans rows to find the most likely real table header row (useful when exports contain intro/report text first).
+4. Parses with Python's `csv` module starting from that header row and ignores blank rows.
+5. If a row is parsed as one field but still contains a full comma-separated line, it safely splits into:
    - description
    - item number
    - pack size

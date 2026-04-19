@@ -317,6 +317,8 @@
             <p><strong>File uploaded:</strong> {{ "Yes" if detail.uploaded else "No" }}</p>
             <p><strong>Parser path:</strong> {{ detail.parser_path }}</p>
             <p><strong>Detected delimiter:</strong> {{ detail.delimiter if detail.delimiter else "N/A" }}</p>
+            <p><strong>Header row chosen:</strong> {{ detail.header_row_index if detail.header_row_index else "N/A" }}</p>
+            <p><strong>Rows skipped before table:</strong> {{ detail.skipped_intro_rows if detail.skipped_intro_rows is not none else "N/A" }}</p>
             <p><strong>Selected columns:</strong>
               description={{ detail.selected_columns.description if detail.selected_columns else "none" }},
               item_number={{ detail.selected_columns.item_number if detail.selected_columns else "none" }},

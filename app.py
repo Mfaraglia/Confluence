@@ -27,6 +27,16 @@ DESCRIPTION_KEYS = [
 PRICE_KEYS = ["price", "unit price", "cost", "net price"]
 ITEM_NUMBER_KEYS = ["item number", "item #", "item_no", "item no", "sku"]
 PACK_SIZE_KEYS = ["pack size", "pack", "size", "uom"]
+PRODUCT_NUMBER_KEYS = ["product number", "item number", "item #", "sku", "product #"]
+HEADER_HINT_KEYS = [
+    "product description",
+    "description",
+    "product number",
+    "item number",
+    "pack size",
+    "price",
+    "product price",
+]
 
 # Simple replacement rules for common foodservice abbreviations/variants.
 TERM_REPLACEMENTS = {
@@ -60,7 +70,7 @@ def pick_column(fieldnames: List[str], possible_names: List[str]) -> Optional[st
 
 # Try to convert text like "$12.50" into a number. Return None if conversion fails.
 def parse_price_to_float(price_text: str) -> Optional[float]:
-    cleaned = (price_text or "").replace("$", "").replace(",", "").strip()
+    cleaned = (price_text or "").replace("$", "").replace(",", "").replace(" ", "").strip()
     if cleaned == "":
         return None
     try:
@@ -155,6 +165,23 @@ def detect_delimiter(csv_text: str) -> str:
         return ","
 
 
+def find_header_row(raw_rows: List[List[str]]) -> int:
+    for index, row in enumerate(raw_rows):
+        normalized_cells = [normalize(cell) for cell in row if normalize(cell)]
+        if not normalized_cells:
+            continue
+
+        has_description = any(cell in {"description", "product description", "item description"} for cell in normalized_cells)
+        has_price = any(cell in {"price", "product price", "unit price", "net price"} for cell in normalized_cells)
+        hint_matches = sum(1 for cell in normalized_cells if cell in HEADER_HINT_KEYS)
+
+        # A likely header has at least 2 known header hints and includes description + price style columns.
+        if hint_matches >= 2 and has_description and has_price:
+            return index
+
+    return 0
+
+
 # Check if a parsed row likely contains an entire CSV line in one field.
 # We only trigger fallback when there is one non-empty value with 3+ commas,
 # which helps avoid breaking correctly formatted rows.
@@ -191,6 +218,8 @@ def parse_vendor_text(
         "delimiter": "",
         "selected_columns": {},
         "mapping_needed": False,
+        "header_row_index": 0,
+        "skipped_intro_rows": 0,
     }
 
     errors: List[str] = []
@@ -203,19 +232,28 @@ def parse_vendor_text(
     delimiter = detect_delimiter(text)
     debug_info["delimiter"] = repr(delimiter)
 
-    reader = csv.DictReader(io.StringIO(text), delimiter=delimiter)
-
-    if not reader.fieldnames:
+    raw_rows = list(csv.reader(io.StringIO(text), delimiter=delimiter))
+    if not raw_rows:
         debug_info["parser_path"] = "normal"
         return [], [f"{vendor_name}: Could not read column headers. Please check your CSV file."], debug_info
 
-    debug_info["headers"] = list(reader.fieldnames)
+    header_row_index = find_header_row(raw_rows)
+    debug_info["header_row_index"] = header_row_index + 1  # 1-based for easier reading
+    debug_info["skipped_intro_rows"] = header_row_index
+
+    header_row = raw_rows[header_row_index] if header_row_index < len(raw_rows) else []
+    fieldnames = [cell.strip() for cell in header_row]
+    if not any(fieldnames):
+        debug_info["parser_path"] = "normal"
+        return [], [f"{vendor_name}: Could not read column headers. Please check your CSV file."], debug_info
+
+    debug_info["headers"] = fieldnames
 
     # We only require description + price for this comparison table.
-    desc_col = pick_column(reader.fieldnames, DESCRIPTION_KEYS)
-    price_col = pick_column(reader.fieldnames, PRICE_KEYS)
-    item_col = pick_column(reader.fieldnames, ITEM_NUMBER_KEYS)
-    pack_col = pick_column(reader.fieldnames, PACK_SIZE_KEYS)
+    desc_col = pick_column(fieldnames, DESCRIPTION_KEYS)
+    price_col = pick_column(fieldnames, PRICE_KEYS)
+    item_col = pick_column(fieldnames, ITEM_NUMBER_KEYS + PRODUCT_NUMBER_KEYS)
+    pack_col = pick_column(fieldnames, PACK_SIZE_KEYS)
 
     # If user provided manual mapping, use those selections.
     # If not, use automatic guesses.
@@ -243,7 +281,15 @@ def parse_vendor_text(
         return [], errors, debug_info
 
     used_fallback = False
-    for row in reader:
+    data_rows = raw_rows[header_row_index + 1 :]
+    for values in data_rows:
+        # Ignore fully blank lines in exports.
+        if not any((cell or "").strip() for cell in values):
+            continue
+
+        padded_values = values + [""] * max(0, len(fieldnames) - len(values))
+        row = {fieldnames[i]: padded_values[i] if i < len(padded_values) else "" for i in range(len(fieldnames))}
+
         description = (row.get(desc_col) or "").strip()
         raw_price = (row.get(price_col) or "").strip()
         item_number = (row.get(item_col) or "").strip() if item_col else ""
@@ -317,6 +363,8 @@ def parse_vendor_csv(
             "delimiter": "",
             "selected_columns": {},
             "mapping_needed": False,
+            "header_row_index": 0,
+            "skipped_intro_rows": 0,
         }
         return [], [], debug_info, ""
 
@@ -332,6 +380,8 @@ def parse_vendor_csv(
             "delimiter": "",
             "selected_columns": {},
             "mapping_needed": False,
+            "header_row_index": 0,
+            "skipped_intro_rows": 0,
         }
         return [], [f"{vendor_name}: Please upload a UTF-8 CSV file."], debug_info, ""
 
@@ -574,6 +624,8 @@ def index():
                             "delimiter": "",
                             "selected_columns": {},
                             "mapping_needed": False,
+                            "header_row_index": 0,
+                            "skipped_intro_rows": 0,
                         }
                     )
                     continue
