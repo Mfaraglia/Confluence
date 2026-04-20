@@ -307,6 +307,28 @@
       </div>
     {% endif %}
 
+    {% if review_success_messages %}
+      <div class="debug-summary" role="status">
+        <strong>Review Success</strong>
+        <ul>
+          {% for message in review_success_messages %}
+            <li>{{ message }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+
+    {% if review_error_messages %}
+      <div class="errors" role="alert">
+        <strong>Review Errors</strong>
+        <ul>
+          {% for message in review_error_messages %}
+            <li>{{ message }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+
     {% if debug_details %}
       <section class="debug" aria-label="CSV debug details">
         <h2>CSV Parse Debug</h2>
@@ -386,23 +408,29 @@
         <p class="muted">Medium-confidence matches are shown here so you can confirm or reject them.</p>
         {% for candidate in possible_matches %}
           <div class="debug-card">
-            <p><strong>Vendor 1 description:</strong> {{ candidate.left_description }}</p>
-            <p><strong>Vendor 2 description:</strong> {{ candidate.right_description }}</p>
+            <p><strong>Vendor 1 description:</strong> {{ candidate.vendor_1_description }}</p>
+            <p><strong>Vendor 2 description:</strong> {{ candidate.vendor_2_description }}</p>
             <p><strong>Confidence:</strong> {{ candidate.confidence }}</p>
             <form method="POST" style="display:inline-block; margin-right:8px;">
               <input type="hidden" name="action" value="review_decision">
               <input type="hidden" name="upload_id" value="{{ upload_id }}">
+              <input type="hidden" name="review_id" value="{{ candidate.review_id }}">
+              <input type="hidden" name="vendor_1_description" value="{{ candidate.vendor_1_description }}">
+              <input type="hidden" name="vendor_2_description" value="{{ candidate.vendor_2_description }}">
               <input type="hidden" name="pair_key" value="{{ candidate.pair_key }}">
-              <input type="hidden" name="group_key" value="{{ candidate.group_key }}">
+              <input type="hidden" name="proposed_group_key" value="{{ candidate.proposed_group_key }}">
               <input type="hidden" name="decision" value="match">
               <button type="submit">Match</button>
             </form>
             <form method="POST" style="display:inline-block;">
               <input type="hidden" name="action" value="review_decision">
               <input type="hidden" name="upload_id" value="{{ upload_id }}">
+              <input type="hidden" name="review_id" value="{{ candidate.review_id }}">
+              <input type="hidden" name="vendor_1_description" value="{{ candidate.vendor_1_description }}">
+              <input type="hidden" name="vendor_2_description" value="{{ candidate.vendor_2_description }}">
               <input type="hidden" name="pair_key" value="{{ candidate.pair_key }}">
-              <input type="hidden" name="group_key" value="{{ candidate.group_key }}">
-              <input type="hidden" name="decision" value="separate">
+              <input type="hidden" name="proposed_group_key" value="{{ candidate.proposed_group_key }}">
+              <input type="hidden" name="decision" value="keep_separate">
               <button type="submit">Keep Separate</button>
             </form>
           </div>

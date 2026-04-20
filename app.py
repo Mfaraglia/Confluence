@@ -27,7 +27,7 @@ def load_match_memory() -> Dict[str, Any]:
                 "confirmed": data.get("confirmed", {}),
                 "rejected": set(data.get("rejected", [])),
             }
-    except FileNotFoundError:
+    except Exception:
         return {"confirmed": {}, "rejected": set()}
 
 
@@ -723,11 +723,12 @@ def build_comparison_rows(
             # Medium confidence: suggest review, do not auto-group.
             possible_matches.append(
                 {
-                    "left_description": original_description,
-                    "right_description": best_candidate_description,
+                    "review_id": str(uuid.uuid4()),
+                    "vendor_1_description": original_description,
+                    "vendor_2_description": best_candidate_description,
                     "confidence": f"{best_confidence:.2f}",
                     "pair_key": pair_key,
-                    "group_key": best_group_key,
+                    "proposed_group_key": best_group_key,
                 }
             )
             final_group_key = f"{product_family}::{normalized_description}"
@@ -835,6 +836,8 @@ def index():
     match_debug_rows: List[Dict[str, str]] = []
     possible_matches: List[Dict[str, str]] = []
     errors: List[str] = []
+    review_success_messages: List[str] = []
+    review_error_messages: List[str] = []
     debug_details: List[Dict[str, Any]] = []
     mapping_options: Dict[str, Any] = {}
     show_mapping_form = False
@@ -854,6 +857,10 @@ def index():
         action = request.form.get("action", "upload")
         upload_id = request.form.get("upload_id", "")
         match_memory = load_match_memory()
+        fallback_memory = session.get("match_memory_fallback", {})
+        if isinstance(fallback_memory, dict):
+            match_memory["confirmed"].update(fallback_memory.get("confirmed", {}))
+            match_memory["rejected"].update(set(fallback_memory.get("rejected", [])))
 
         # File uploads require multipart/form-data in the HTML form.
         # If the form is not multipart, request.files will be empty.
@@ -955,17 +962,52 @@ def index():
 
         # Step 3: user confirms/rejects possible match suggestion.
         elif action == "review_decision":
-            pair_key = request.form.get("pair_key", "")
-            decision = request.form.get("decision", "")
-            group_key = request.form.get("group_key", "")
-            if pair_key and decision == "match":
-                match_memory["confirmed"][pair_key] = group_key
-                match_memory["rejected"].discard(pair_key)
-                save_match_memory(match_memory)
-            elif pair_key and decision == "separate":
-                match_memory["rejected"].add(pair_key)
-                match_memory["confirmed"].pop(pair_key, None)
-                save_match_memory(match_memory)
+            try:
+                decision = request.form.get("decision", "")
+                vendor_1_description = request.form.get("vendor_1_description", "")
+                vendor_2_description = request.form.get("vendor_2_description", "")
+                proposed_group_key = request.form.get("proposed_group_key", "")
+                review_id = request.form.get("review_id", "")
+                pair_key = request.form.get("pair_key", "") or build_pair_key(
+                    vendor_1_description, vendor_2_description
+                )
+
+                debug_prefix = (
+                    f"Review submission id={review_id}, action={decision}, "
+                    f"item1='{vendor_1_description}', item2='{vendor_2_description}', "
+                    f"proposed_group_key='{proposed_group_key}'"
+                )
+
+                save_status = "failed"
+                if pair_key and decision == "match":
+                    match_memory["confirmed"][pair_key] = proposed_group_key
+                    match_memory["rejected"].discard(pair_key)
+                elif pair_key and decision == "keep_separate":
+                    match_memory["rejected"].add(pair_key)
+                    match_memory["confirmed"].pop(pair_key, None)
+                else:
+                    raise ValueError("Missing required review fields or unknown decision value.")
+
+                try:
+                    save_match_memory(match_memory)
+                    save_status = "succeeded"
+                except Exception:
+                    # Fallback for environments where local file writes are unreliable (e.g. Vercel).
+                    session["match_memory_fallback"] = {
+                        "confirmed": match_memory.get("confirmed", {}),
+                        "rejected": sorted(list(match_memory.get("rejected", set()))),
+                    }
+                    save_status = "failed (stored in session memory fallback)"
+
+                print(f"{debug_prefix}, save_status={save_status}")
+                if save_status.startswith("succeeded"):
+                    review_success_messages.append(f"{debug_prefix}, save_status={save_status}")
+                else:
+                    review_error_messages.append(f"{debug_prefix}, save_status={save_status}")
+            except Exception as exc:
+                error_message = f"Review submission error: {exc}"
+                print(error_message)
+                review_error_messages.append(error_message)
 
             if not upload_id:
                 upload_id = session.get("last_upload_id", "")
@@ -1000,6 +1042,8 @@ def index():
         show_mapping_form=show_mapping_form,
         mapping_options=mapping_options,
         upload_id=upload_id,
+        review_success_messages=review_success_messages,
+        review_error_messages=review_error_messages,
     )
 
 
