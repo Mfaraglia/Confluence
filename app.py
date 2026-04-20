@@ -17,6 +17,7 @@ MATCH_MEMORY_FILE = "match_memory.json"
 # 2) apply manual column mapping
 # This keeps the app beginner-friendly without adding a database.
 UPLOAD_CACHE: Dict[str, Dict[str, str]] = {}
+SESSION_REVIEW_MEMORY: Dict[str, Dict[str, Any]] = {}
 
 
 def load_match_memory() -> Dict[str, Any]:
@@ -48,6 +49,12 @@ def build_pair_key(left: str, right: str) -> str:
     b = clean_description_for_match(right)
     return "||".join(sorted([a, b]))
 
+
+def get_session_id() -> str:
+    if "session_id" not in session:
+        session["session_id"] = str(uuid.uuid4())
+    return str(session["session_id"])
+
 # These lists hold common header names we might see in vendor CSV files.
 DESCRIPTION_KEYS = [
     "description",
@@ -56,7 +63,7 @@ DESCRIPTION_KEYS = [
     "product",
     "name",
 ]
-PRICE_KEYS = ["price", "unit price", "cost", "net price"]
+PRICE_KEYS = ["price", "product price", "unit price", "net price", "sell price", "cost"]
 ITEM_NUMBER_KEYS = ["item number", "item #", "item_no", "item no", "sku"]
 PACK_SIZE_KEYS = ["pack size", "pack", "size", "uom"]
 PRODUCT_NUMBER_KEYS = ["product number", "item number", "item #", "sku", "product #"]
@@ -69,6 +76,7 @@ HEADER_HINT_KEYS = [
     "price",
     "product price",
 ]
+PRICE_HEADER_CANDIDATES = ["price", "product price", "unit price", "net price", "sell price"]
 
 # Simple replacement rules for common foodservice abbreviations/variants.
 TERM_REPLACEMENTS = {
@@ -460,6 +468,7 @@ def parse_vendor_text(
         "parser_path": "not used",
         "delimiter": "",
         "selected_columns": {},
+        "price_selection_reason": "",
         "mapping_needed": False,
         "header_row_index": 0,
         "skipped_intro_rows": 0,
@@ -498,6 +507,11 @@ def parse_vendor_text(
     item_col = pick_column(fieldnames, ITEM_NUMBER_KEYS + PRODUCT_NUMBER_KEYS)
     pack_col = pick_column(fieldnames, PACK_SIZE_KEYS)
 
+    likely_price_columns = [
+        name for name in fieldnames if normalize(name) in PRICE_HEADER_CANDIDATES
+    ]
+    price_selection_reason = ""
+
     # If user provided manual mapping, use those selections.
     # If not, use automatic guesses.
     if mapping:
@@ -505,6 +519,18 @@ def parse_vendor_text(
         item_col = mapping.get("item_number") or item_col
         pack_col = mapping.get("pack_size") or pack_col
         price_col = mapping.get("price") or price_col
+        if mapping.get("price"):
+            price_selection_reason = "manual mapping selected price column"
+    else:
+        if price_col:
+            price_selection_reason = "auto-detected standard price header"
+        elif len(likely_price_columns) == 1:
+            price_col = likely_price_columns[0]
+            price_selection_reason = "auto-selected because exactly one likely price header exists"
+        elif len(likely_price_columns) > 1:
+            price_selection_reason = "multiple likely price headers found; manual selection may be needed"
+        else:
+            price_selection_reason = "no likely price header found"
 
     debug_info["selected_columns"] = {
         "description": desc_col or "",
@@ -512,6 +538,7 @@ def parse_vendor_text(
         "pack_size": pack_col or "",
         "price": price_col or "",
     }
+    debug_info["price_selection_reason"] = price_selection_reason
 
     if not desc_col:
         errors.append(f"{vendor_name}: Please choose a Product Description column.")
@@ -617,6 +644,7 @@ def parse_vendor_csv(
             "parser_path": "not used",
             "delimiter": "",
             "selected_columns": {},
+            "price_selection_reason": "",
             "mapping_needed": False,
             "header_row_index": 0,
             "skipped_intro_rows": 0,
@@ -634,6 +662,7 @@ def parse_vendor_csv(
             "parser_path": "normal",
             "delimiter": "",
             "selected_columns": {},
+            "price_selection_reason": "",
             "mapping_needed": False,
             "header_row_index": 0,
             "skipped_intro_rows": 0,
@@ -857,6 +886,10 @@ def index():
         action = request.form.get("action", "upload")
         upload_id = request.form.get("upload_id", "")
         match_memory = load_match_memory()
+        session_id = get_session_id()
+        session_memory = SESSION_REVIEW_MEMORY.get(session_id, {"confirmed": {}, "rejected": set()})
+        match_memory["confirmed"].update(session_memory.get("confirmed", {}))
+        match_memory["rejected"].update(set(session_memory.get("rejected", set())))
         fallback_memory = session.get("match_memory_fallback", {})
         if isinstance(fallback_memory, dict):
             match_memory["confirmed"].update(fallback_memory.get("confirmed", {}))
@@ -934,6 +967,7 @@ def index():
                             "parser_path": "not used",
                             "delimiter": "",
                             "selected_columns": {},
+                            "price_selection_reason": "",
                             "mapping_needed": False,
                             "header_row_index": 0,
                             "skipped_intro_rows": 0,
@@ -979,6 +1013,7 @@ def index():
                 )
 
                 save_status = "failed"
+                storage_location = "none"
                 if pair_key and decision == "match":
                     match_memory["confirmed"][pair_key] = proposed_group_key
                     match_memory["rejected"].discard(pair_key)
@@ -991,19 +1026,30 @@ def index():
                 try:
                     save_match_memory(match_memory)
                     save_status = "succeeded"
+                    storage_location = "local_file"
                 except Exception:
-                    # Fallback for environments where local file writes are unreliable (e.g. Vercel).
-                    session["match_memory_fallback"] = {
-                        "confirmed": match_memory.get("confirmed", {}),
-                        "rejected": sorted(list(match_memory.get("rejected", set()))),
-                    }
-                    save_status = "failed (stored in session memory fallback)"
+                    save_status = "succeeded"
+                    storage_location = "server_memory_fallback"
 
-                print(f"{debug_prefix}, save_status={save_status}")
+                # Always mirror memory to server-side in-memory store for stable active-session behavior.
+                SESSION_REVIEW_MEMORY[session_id] = {
+                    "confirmed": dict(match_memory.get("confirmed", {})),
+                    "rejected": set(match_memory.get("rejected", set())),
+                }
+                session["match_memory_fallback"] = {
+                    "confirmed": match_memory.get("confirmed", {}),
+                    "rejected": sorted(list(match_memory.get("rejected", set()))),
+                }
+
+                print(f"{debug_prefix}, save_status={save_status}, stored_in={storage_location}")
                 if save_status.startswith("succeeded"):
-                    review_success_messages.append(f"{debug_prefix}, save_status={save_status}")
+                    review_success_messages.append(
+                        f"{debug_prefix}, save_status={save_status}, stored_in={storage_location}"
+                    )
                 else:
-                    review_error_messages.append(f"{debug_prefix}, save_status={save_status}")
+                    review_error_messages.append(
+                        f"{debug_prefix}, save_status={save_status}, stored_in={storage_location}"
+                    )
             except Exception as exc:
                 error_message = f"Review submission error: {exc}"
                 print(error_message)

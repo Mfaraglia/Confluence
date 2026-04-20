@@ -347,6 +347,7 @@
               pack_size={{ detail.selected_columns.pack_size if detail.selected_columns else "none" }},
               price={{ detail.selected_columns.price if detail.selected_columns else "none" }}
             </p>
+            <p><strong>Price selection reason:</strong> {{ detail.price_selection_reason if detail.price_selection_reason else "N/A" }}</p>
             <p><strong>Detected headers:</strong>
               {% if detail.headers %}
                 {{ detail.headers|join(", ") }}
