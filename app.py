@@ -1,5 +1,6 @@
 import csv
 import io
+import json
 import re
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
@@ -9,12 +10,43 @@ from manual_overrides import MANUAL_MATCH_OVERRIDES
 
 app = Flask(__name__)
 app.secret_key = "dev-secret-key-change-me"
+MATCH_MEMORY_FILE = "match_memory.json"
 
 # Simple in-memory cache for uploaded CSV text between two submits:
 # 1) upload file(s)
 # 2) apply manual column mapping
 # This keeps the app beginner-friendly without adding a database.
 UPLOAD_CACHE: Dict[str, Dict[str, str]] = {}
+
+
+def load_match_memory() -> Dict[str, Any]:
+    try:
+        with open(MATCH_MEMORY_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return {
+                "confirmed": data.get("confirmed", {}),
+                "rejected": set(data.get("rejected", [])),
+            }
+    except FileNotFoundError:
+        return {"confirmed": {}, "rejected": set()}
+
+
+def save_match_memory(memory: Dict[str, Any]) -> None:
+    with open(MATCH_MEMORY_FILE, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "confirmed": memory.get("confirmed", {}),
+                "rejected": sorted(list(memory.get("rejected", set()))),
+            },
+            f,
+            indent=2,
+        )
+
+
+def build_pair_key(left: str, right: str) -> str:
+    a = clean_description_for_match(left)
+    b = clean_description_for_match(right)
+    return "||".join(sorted([a, b]))
 
 # These lists hold common header names we might see in vendor CSV files.
 DESCRIPTION_KEYS = [
@@ -614,10 +646,14 @@ def parse_vendor_csv(
 
 # Combine rows from all vendors using token-overlap + similarity matching.
 def build_comparison_rows(
-    rows: List[Dict[str, Optional[float]]],
-) -> Tuple[List[Dict[str, str]], List[Dict[str, str]]]:
+    rows: List[Dict[str, Optional[float]]], match_memory: Dict[str, Any]
+) -> Tuple[List[Dict[str, str]], List[Dict[str, str]], List[Dict[str, str]]]:
     combined: Dict[str, Dict[str, Any]] = {}
     match_debug_rows: List[Dict[str, str]] = []
+    possible_matches: List[Dict[str, str]] = []
+
+    high_conf_threshold = 0.80
+    medium_conf_threshold = 0.60
 
     for row in rows:
         original_description = (row.get("description") or "").strip()
@@ -648,14 +684,58 @@ def build_comparison_rows(
                 inferred_product_family = infer_product_family_from_tokens(core_tokens)
                 product_family = inferred_product_family
 
-        # Required grouping behavior:
-        # After product_family is assigned, always use it as final group key.
-        final_group_key = product_family if product_family else "unclassified item"
+        # Decide whether to auto-group, suggest review, or keep separate.
+        best_group_key = ""
+        best_confidence = 0.0
+        best_candidate_description = ""
+        for group_key, group_data in combined.items():
+            core_overlap = token_overlap_score(core_tokens, list(group_data["core_tokens"]))
+            attribute_overlap = token_overlap_score(attribute_tokens, list(group_data["attribute_tokens"]))
+            size_overlap = token_overlap_score(size_tokens, list(group_data["size_tokens"]))
+            family_bonus = 1.0 if product_family and product_family == group_data.get("product_family", "") else 0.0
+            confidence = (
+                (0.45 * family_bonus)
+                + (0.35 * core_overlap)
+                + (0.15 * attribute_overlap)
+                + (0.05 * size_overlap)
+            )
+            if confidence > best_confidence:
+                best_confidence = confidence
+                best_group_key = group_key
+                best_candidate_description = str(group_data["display_description"])
 
-        # Confidence is still shown in debug:
-        # - 1.00 when this is the first item in a family
-        # - computed overlap score when family already exists
-        match_confidence = 1.00
+        confirmed_group = ""
+        if best_group_key:
+            pair_key = build_pair_key(alias_expanded_description, best_candidate_description)
+            confirmed_group = match_memory.get("confirmed", {}).get(pair_key, "")
+            is_rejected = pair_key in match_memory.get("rejected", set())
+        else:
+            pair_key = ""
+            is_rejected = False
+
+        if confirmed_group:
+            final_group_key = confirmed_group
+            match_confidence = 1.0
+        elif best_group_key and (not is_rejected) and best_confidence >= high_conf_threshold:
+            final_group_key = best_group_key
+            match_confidence = best_confidence
+        elif best_group_key and (not is_rejected) and best_confidence >= medium_conf_threshold:
+            # Medium confidence: suggest review, do not auto-group.
+            possible_matches.append(
+                {
+                    "left_description": original_description,
+                    "right_description": best_candidate_description,
+                    "confidence": f"{best_confidence:.2f}",
+                    "pair_key": pair_key,
+                    "group_key": best_group_key,
+                }
+            )
+            final_group_key = f"{product_family}::{normalized_description}"
+            match_confidence = best_confidence
+        else:
+            # Low confidence (or rejected): keep separate.
+            final_group_key = f"{product_family}::{normalized_description}"
+            match_confidence = best_confidence if best_group_key else 1.0
 
         if final_group_key not in combined:
             combined[final_group_key] = {
@@ -670,14 +750,6 @@ def build_comparison_rows(
                 "pfg": None,
             }
         else:
-            group_core_tokens = list(combined[final_group_key]["core_tokens"])
-            group_attribute_tokens = list(combined[final_group_key]["attribute_tokens"])
-            group_size_tokens = list(combined[final_group_key]["size_tokens"])
-            core_overlap = token_overlap_score(core_tokens, group_core_tokens)
-            attribute_overlap = token_overlap_score(attribute_tokens, group_attribute_tokens)
-            size_overlap = token_overlap_score(size_tokens, group_size_tokens)
-            match_confidence = (0.60 * core_overlap) + (0.30 * attribute_overlap) + (0.10 * size_overlap)
-
             # Keep the clearest human-readable label among matched rows.
             combined[final_group_key]["display_description"] = choose_clearer_description(
                 str(combined[final_group_key]["display_description"]), original_description
@@ -754,13 +826,14 @@ def build_comparison_rows(
             }
         )
 
-    return output, match_debug_rows
+    return output, match_debug_rows, possible_matches
 
 
 @app.route("/", methods=["GET", "POST"])
 def index():
     comparison_rows: List[Dict[str, str]] = []
     match_debug_rows: List[Dict[str, str]] = []
+    possible_matches: List[Dict[str, str]] = []
     errors: List[str] = []
     debug_details: List[Dict[str, Any]] = []
     mapping_options: Dict[str, Any] = {}
@@ -780,6 +853,7 @@ def index():
         all_vendor_rows: List[Dict[str, Optional[float]]] = []
         action = request.form.get("action", "upload")
         upload_id = request.form.get("upload_id", "")
+        match_memory = load_match_memory()
 
         # File uploads require multipart/form-data in the HTML form.
         # If the form is not multipart, request.files will be empty.
@@ -879,11 +953,39 @@ def index():
                         "selected": debug_info.get("selected_columns", {}),
                     }
 
+        # Step 3: user confirms/rejects possible match suggestion.
+        elif action == "review_decision":
+            pair_key = request.form.get("pair_key", "")
+            decision = request.form.get("decision", "")
+            group_key = request.form.get("group_key", "")
+            if pair_key and decision == "match":
+                match_memory["confirmed"][pair_key] = group_key
+                match_memory["rejected"].discard(pair_key)
+                save_match_memory(match_memory)
+            elif pair_key and decision == "separate":
+                match_memory["rejected"].add(pair_key)
+                match_memory["confirmed"].pop(pair_key, None)
+                save_match_memory(match_memory)
+
+            if not upload_id:
+                upload_id = session.get("last_upload_id", "")
+            cached_vendor_files = UPLOAD_CACHE.get(upload_id, {})
+            for vendor_name, _, _ in vendor_keys:
+                file_text = cached_vendor_files.get(vendor_name, "")
+                if not file_text:
+                    continue
+                rows, file_errors, debug_info = parse_vendor_text(vendor_name, file_text, None)
+                all_vendor_rows.extend(rows)
+                errors.extend(file_errors)
+                debug_details.append(debug_info)
+
         if not all_vendor_rows and not errors and action == "upload":
             errors.append("Please upload at least one CSV file.")
 
         if all_vendor_rows and not show_mapping_form:
-            comparison_rows, match_debug_rows = build_comparison_rows(all_vendor_rows)
+            comparison_rows, match_debug_rows, possible_matches = build_comparison_rows(
+                all_vendor_rows, match_memory
+            )
         elif show_mapping_form and not errors:
             errors.append("Please choose manual column mappings, then click Apply Column Mapping.")
 
@@ -893,6 +995,7 @@ def index():
         errors=errors,
         debug_details=debug_details,
         match_debug_rows=match_debug_rows,
+        possible_matches=possible_matches,
         upload_debug=upload_debug,
         show_mapping_form=show_mapping_form,
         mapping_options=mapping_options,

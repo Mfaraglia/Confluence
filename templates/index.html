@@ -380,6 +380,36 @@
       </section>
     {% endif %}
 
+    {% if possible_matches %}
+      <section class="debug" aria-label="Possible match review">
+        <h2>Possible Matches (Review Needed)</h2>
+        <p class="muted">Medium-confidence matches are shown here so you can confirm or reject them.</p>
+        {% for candidate in possible_matches %}
+          <div class="debug-card">
+            <p><strong>Vendor 1 description:</strong> {{ candidate.left_description }}</p>
+            <p><strong>Vendor 2 description:</strong> {{ candidate.right_description }}</p>
+            <p><strong>Confidence:</strong> {{ candidate.confidence }}</p>
+            <form method="POST" style="display:inline-block; margin-right:8px;">
+              <input type="hidden" name="action" value="review_decision">
+              <input type="hidden" name="upload_id" value="{{ upload_id }}">
+              <input type="hidden" name="pair_key" value="{{ candidate.pair_key }}">
+              <input type="hidden" name="group_key" value="{{ candidate.group_key }}">
+              <input type="hidden" name="decision" value="match">
+              <button type="submit">Match</button>
+            </form>
+            <form method="POST" style="display:inline-block;">
+              <input type="hidden" name="action" value="review_decision">
+              <input type="hidden" name="upload_id" value="{{ upload_id }}">
+              <input type="hidden" name="pair_key" value="{{ candidate.pair_key }}">
+              <input type="hidden" name="group_key" value="{{ candidate.group_key }}">
+              <input type="hidden" name="decision" value="separate">
+              <button type="submit">Keep Separate</button>
+            </form>
+          </div>
+        {% endfor %}
+      </section>
+    {% endif %}
+
     <div class="table-wrap">
       <table aria-label="Vendor comparison table">
         <thead>
