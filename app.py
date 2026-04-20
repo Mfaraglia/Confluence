@@ -2,7 +2,6 @@ import csv
 import io
 import re
 import uuid
-from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional, Tuple
 
 from flask import Flask, render_template, request, session
@@ -298,6 +297,32 @@ def detect_family_alias(core_tokens: List[str], attribute_tokens: List[str]) -> 
     return ""
 
 
+def infer_product_family_from_tokens(core_tokens: List[str]) -> str:
+    token_set = set(core_tokens)
+
+    if {"chicken", "breast"}.issubset(token_set):
+        return "chicken breast"
+    if {"ground", "beef"}.issubset(token_set) or {"beef", "ground"}.issubset(token_set):
+        return "ground beef"
+    if {"bun", "brioche"}.issubset(token_set):
+        return "brioche bun"
+    if {"bun", "hamburger"}.issubset(token_set):
+        return "hamburger bun"
+    if "fries" in token_set:
+        return "french fries"
+    if "avocado" in token_set:
+        return "avocado"
+    if {"cheese", "mozzarella"}.issubset(token_set):
+        return "mozzarella cheese"
+    if {"cheese", "cheddar"}.issubset(token_set):
+        return "cheddar cheese"
+
+    if core_tokens:
+        # Last-resort readable fallback so every row still gets a family key.
+        return " ".join(core_tokens[:2]).strip()
+    return "unclassified item"
+
+
 def choose_clearer_description(current: str, candidate: str) -> str:
     # Simple readability rule:
     # keep whichever description is longer (usually less abbreviated).
@@ -475,6 +500,7 @@ def parse_vendor_text(
             "attribute_tokens": [],
             "size_tokens": [],
             "product_family": "",
+            "inferred_product_family": "",
             "match_confidence": 0.0,
             "final_group_key": "",
         }
@@ -494,6 +520,7 @@ def parse_vendor_text(
                     "attribute_tokens": parsed_row["attribute_tokens"],
                     "size_tokens": parsed_row["size_tokens"],
                     "product_family": parsed_row["product_family"],
+                    "inferred_product_family": parsed_row["inferred_product_family"],
                     "match_confidence": parsed_row["match_confidence"],
                     "final_group_key": parsed_row["final_group_key"],
                 }
@@ -564,62 +591,19 @@ def build_comparison_rows(
         tokens = build_meaningful_tokens(normalized_description)
         core_tokens, attribute_tokens, size_tokens = split_core_attribute_size_tokens(tokens)
         product_family = detect_family_alias(core_tokens, attribute_tokens)
+        inferred_product_family = ""
+        if not product_family:
+            inferred_product_family = infer_product_family_from_tokens(core_tokens)
+            product_family = inferred_product_family
 
-        # Find best existing group using:
-        # - core token overlap (primary signal)
-        # - size token overlap (secondary signal)
-        # - text similarity score (backup signal)
-        best_key = ""
-        best_score = 0.0
-        best_core_overlap = 0.0
-        best_attribute_overlap = 0.0
-        best_size_overlap = 0.0
-        best_similarity = 0.0
-        best_family_bonus = 0.0
+        # Required grouping behavior:
+        # After product_family is assigned, always use it as final group key.
+        final_group_key = product_family if product_family else "unclassified item"
 
-        for group_key, group_data in combined.items():
-            group_core_tokens = list(group_data["core_tokens"])
-            group_attribute_tokens = list(group_data["attribute_tokens"])
-            group_size_tokens = list(group_data["size_tokens"])
-            core_overlap = token_overlap_score(core_tokens, group_core_tokens)
-            attribute_overlap = token_overlap_score(attribute_tokens, group_attribute_tokens)
-            size_overlap = token_overlap_score(size_tokens, group_size_tokens)
-            similarity = SequenceMatcher(None, normalized_description, group_data["normalized"]).ratio()
-            family_bonus = 1.0 if product_family and product_family == group_data.get("product_family", "") else 0.0
-            score = (
-                (0.45 * family_bonus)
-                + (0.35 * core_overlap)
-                + (0.15 * attribute_overlap)
-                + (0.05 * size_overlap)
-            )
-
-            if score > best_score:
-                best_score = score
-                best_key = group_key
-                best_core_overlap = core_overlap
-                best_attribute_overlap = attribute_overlap
-                best_size_overlap = size_overlap
-                best_similarity = similarity
-                best_family_bonus = family_bonus
-
-        # Match when products are "close enough" by simple thresholds.
-        # Core words drive grouping; size words are only secondary.
-        match_confidence = best_score
-        should_match_existing = (
-            best_key != ""
-            and (
-                (best_family_bonus > 0 and best_core_overlap >= 0.25)
-                or (best_core_overlap >= 0.50 and best_attribute_overlap >= 0.30)
-                or (best_core_overlap >= 0.60)
-                or (best_core_overlap >= 0.40 and best_similarity >= 0.78)
-            )
-            and match_confidence >= 0.62
-        )
-
-        default_group_key = product_family if product_family else (" ".join(core_tokens) if core_tokens else normalized_description)
-        final_group_key = best_key if should_match_existing else default_group_key
-        if final_group_key == "":
-            final_group_key = "(no description)"
+        # Confidence is still shown in debug:
+        # - 1.00 when this is the first item in a family
+        # - computed overlap score when family already exists
+        match_confidence = 1.00
 
         if final_group_key not in combined:
             combined[final_group_key] = {
@@ -634,6 +618,14 @@ def build_comparison_rows(
                 "pfg": None,
             }
         else:
+            group_core_tokens = list(combined[final_group_key]["core_tokens"])
+            group_attribute_tokens = list(combined[final_group_key]["attribute_tokens"])
+            group_size_tokens = list(combined[final_group_key]["size_tokens"])
+            core_overlap = token_overlap_score(core_tokens, group_core_tokens)
+            attribute_overlap = token_overlap_score(attribute_tokens, group_attribute_tokens)
+            size_overlap = token_overlap_score(size_tokens, group_size_tokens)
+            match_confidence = (0.60 * core_overlap) + (0.30 * attribute_overlap) + (0.10 * size_overlap)
+
             # Keep the clearest human-readable label among matched rows.
             combined[final_group_key]["display_description"] = choose_clearer_description(
                 str(combined[final_group_key]["display_description"]), original_description
@@ -647,6 +639,7 @@ def build_comparison_rows(
         row["attribute_tokens"] = attribute_tokens
         row["size_tokens"] = size_tokens
         row["product_family"] = product_family
+        row["inferred_product_family"] = inferred_product_family
         row["match_confidence"] = round(match_confidence, 2)
         row["final_group_key"] = final_group_key
         row["final_tokens"] = tokens
@@ -655,6 +648,7 @@ def build_comparison_rows(
                 "description": original_description,
                 "normalized_description": normalized_description,
                 "product_family": product_family,
+                "inferred_product_family": inferred_product_family,
                 "core_tokens": ", ".join(core_tokens),
                 "attribute_tokens": ", ".join(attribute_tokens),
                 "size_tokens": ", ".join(size_tokens),

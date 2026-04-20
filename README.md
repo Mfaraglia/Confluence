@@ -50,6 +50,8 @@ You upload CSV files from Sysco, US Foods, and PFG, and the app builds one compa
   - It uses size/pack tokens as weaker tie-breakers only.
   - It adds product-family aliases for common categories such as onion rings, tempura batter mix, ground beef, foam container, chicken breast boneless skinless, heavy cream, and more.
   - It computes a simple match confidence score; high-confidence matches auto-group, low-confidence matches stay separate.
+  - Every row now always receives a `product_family`. If alias rules do not find one, a keyword fallback classifier infers one from core tokens.
+  - After family assignment, the app always uses `final_group_key = product_family` for grouping.
   - It now separates tokens into:
     - **core_tokens** (main food words, primary grouping signal)
     - **size_tokens** (pack/size-like words, secondary signal)
@@ -63,6 +65,8 @@ You upload CSV files from Sysco, US Foods, and PFG, and the app builds one compa
   - rows skipped before table
   - normalized description (used for matching)
 - It now includes a **Matching Debug** section showing for each parsed row:
+  - product_family
+  - inferred_product_family (when fallback classifier is used)
   - core_tokens
   - attribute_tokens
   - size_tokens
