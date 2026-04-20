@@ -5,6 +5,7 @@ import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 from flask import Flask, render_template, request, session
+from manual_overrides import MANUAL_MATCH_OVERRIDES
 
 app = Flask(__name__)
 app.secret_key = "dev-secret-key-change-me"
@@ -78,6 +79,25 @@ TERM_REPLACEMENTS = {
     "controlled_vacuum_packed": "cvp",
     "boneless_skinless": "boneless skinless",
     "beer_battered": "battered",
+}
+
+# Central alias dictionary for product terms + vendor shorthand.
+PRODUCT_ALIASES = {
+    "squid": "calamari",
+    "calamari": "calamari",
+    "aplwd": "applewood",
+    "l/o": "laid out",
+    "laid out": "laid out",
+    "bb": "beer battered",
+    "brst": "breast",
+    "tndr": "tender",
+    "ched": "cheddar",
+    "mozz": "mozzarella",
+    "whi": "white",
+    "hngd": "hinged",
+    "cmpt": "compartment",
+    "fz": "frozen",
+    "ref": "refrigerated",
 }
 WEAK_TOKENS = {
     "lb",
@@ -181,6 +201,7 @@ def clean_description_for_match(description: str) -> str:
     text = text.replace("b/s", " boneless skinless ")
     text = text.replace("_", " ")
     text = text.replace("double lobe", "double")
+    text = text.replace("l/o", " laid out ")
 
     # Convert pound shorthand (#) into lb before punctuation cleanup.
     text = re.sub(r"#", " lb ", text)
@@ -192,7 +213,8 @@ def clean_description_for_match(description: str) -> str:
     # Expand common abbreviations token-by-token.
     expanded_tokens: List[str] = []
     for token in text.split():
-        replacement = TERM_REPLACEMENTS.get(token, token)
+        replacement = PRODUCT_ALIASES.get(token, token)
+        replacement = TERM_REPLACEMENTS.get(replacement, replacement)
         expanded_tokens.extend(replacement.split())
     text = " ".join(expanded_tokens)
 
@@ -212,6 +234,19 @@ def clean_description_for_match(description: str) -> str:
     text = re.sub(r"\s+", " ", text).strip()
 
     return text
+
+
+def find_manual_override_group(normalized_description: str) -> str:
+    # Manual overrides win first. We compare normalized forms for simple exact matching.
+    normalized_input = clean_description_for_match(normalized_description)
+    for group_key, phrases in MANUAL_MATCH_OVERRIDES.items():
+        normalized_group_key = clean_description_for_match(group_key)
+        if normalized_input == normalized_group_key:
+            return group_key
+        for phrase in phrases:
+            if normalized_input == clean_description_for_match(phrase):
+                return group_key
+    return ""
 
 
 # Turn normalized description into meaningful tokens for matching.
@@ -495,12 +530,14 @@ def parse_vendor_text(
             "pack_size": pack_size,
             "price": parse_price_to_float(raw_price),
             "normalized_description": clean_description_for_match(description),
+            "alias_expanded_description": clean_description_for_match(description),
             "final_tokens": build_meaningful_tokens(clean_description_for_match(description)),
             "core_tokens": [],
             "attribute_tokens": [],
             "size_tokens": [],
             "product_family": "",
             "inferred_product_family": "",
+            "override_group_hit": "",
             "match_confidence": 0.0,
             "final_group_key": "",
         }
@@ -515,12 +552,14 @@ def parse_vendor_text(
                     "raw_price": raw_price,
                     "parsed_price": parsed_row["price"],
                     "normalized_description": parsed_row["normalized_description"],
+                    "alias_expanded_description": parsed_row["alias_expanded_description"],
                     "final_tokens": parsed_row["final_tokens"],
                     "core_tokens": parsed_row["core_tokens"],
                     "attribute_tokens": parsed_row["attribute_tokens"],
                     "size_tokens": parsed_row["size_tokens"],
                     "product_family": parsed_row["product_family"],
                     "inferred_product_family": parsed_row["inferred_product_family"],
+                    "override_group_hit": parsed_row["override_group_hit"],
                     "match_confidence": parsed_row["match_confidence"],
                     "final_group_key": parsed_row["final_group_key"],
                 }
@@ -588,13 +627,26 @@ def build_comparison_rows(
         normalized_description = str(
             row.get("normalized_description") or clean_description_for_match(original_description)
         )
+        alias_expanded_description = str(
+            row.get("alias_expanded_description") or normalized_description
+        )
         tokens = build_meaningful_tokens(normalized_description)
         core_tokens, attribute_tokens, size_tokens = split_core_attribute_size_tokens(tokens)
-        product_family = detect_family_alias(core_tokens, attribute_tokens)
+        override_group_hit = find_manual_override_group(alias_expanded_description)
+        product_family = ""
         inferred_product_family = ""
-        if not product_family:
-            inferred_product_family = infer_product_family_from_tokens(core_tokens)
-            product_family = inferred_product_family
+
+        # Priority:
+        # 1) manual override
+        # 2) alias/family rules
+        # 3) token-based fallback classifier
+        if override_group_hit:
+            product_family = override_group_hit
+        else:
+            product_family = detect_family_alias(core_tokens, attribute_tokens)
+            if not product_family:
+                inferred_product_family = infer_product_family_from_tokens(core_tokens)
+                product_family = inferred_product_family
 
         # Required grouping behavior:
         # After product_family is assigned, always use it as final group key.
@@ -640,6 +692,7 @@ def build_comparison_rows(
         row["size_tokens"] = size_tokens
         row["product_family"] = product_family
         row["inferred_product_family"] = inferred_product_family
+        row["override_group_hit"] = override_group_hit
         row["match_confidence"] = round(match_confidence, 2)
         row["final_group_key"] = final_group_key
         row["final_tokens"] = tokens
@@ -647,6 +700,8 @@ def build_comparison_rows(
             {
                 "description": original_description,
                 "normalized_description": normalized_description,
+                "alias_expanded_description": alias_expanded_description,
+                "override_group_hit": override_group_hit,
                 "product_family": product_family,
                 "inferred_product_family": inferred_product_family,
                 "core_tokens": ", ".join(core_tokens),

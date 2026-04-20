@@ -41,6 +41,7 @@ You upload CSV files from Sysco, US Foods, and PFG, and the app builds one compa
   - `controlled_vacuum_packed` / `cvp` normalize together
   - `ff` or `fries french` → `french fries`
   - `#` → `lb`
+  - plus a central alias dictionary for vendor shorthand (for example: `squid -> calamari`, `l/o -> laid out`, `bb -> beer battered`, `tndr -> tender`, `ched -> cheddar`, etc.)
   It also applies a small order fix like `mozzarella shredded cheese` → `mozzarella cheese shredded`.
 - Matching now also uses **token-based similarity** (not just exact normalized text):
   - It splits normalized descriptions into tokens (words).
@@ -52,6 +53,7 @@ You upload CSV files from Sysco, US Foods, and PFG, and the app builds one compa
   - It computes a simple match confidence score; high-confidence matches auto-group, low-confidence matches stay separate.
   - Every row now always receives a `product_family`. If alias rules do not find one, a keyword fallback classifier infers one from core tokens.
   - After family assignment, the app always uses `final_group_key = product_family` for grouping.
+  - Manual override groups (from `manual_overrides.py`) are checked first and win before alias rules and token matching.
   - It now separates tokens into:
     - **core_tokens** (main food words, primary grouping signal)
     - **size_tokens** (pack/size-like words, secondary signal)
@@ -65,6 +67,8 @@ You upload CSV files from Sysco, US Foods, and PFG, and the app builds one compa
   - rows skipped before table
   - normalized description (used for matching)
 - It now includes a **Matching Debug** section showing for each parsed row:
+  - alias_expanded_description
+  - override_group_hit
   - product_family
   - inferred_product_family (when fallback classifier is used)
   - core_tokens
