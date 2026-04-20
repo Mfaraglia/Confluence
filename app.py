@@ -50,6 +50,7 @@ TERM_REPLACEMENTS = {
     "b/s": "boneless skinless",
     "grnd": "ground",
     "bf": "beef",
+    "bb": "battered",
     "mozz": "mozzarella",
     "shrd": "shredded",
     "frz": "frozen",
@@ -70,6 +71,14 @@ TERM_REPLACEMENTS = {
     "fc": "fully cooked",
     "slcd": "sliced",
     "shrd": "shredded",
+    "lqd": "liquid",
+    "blnd": "blend",
+    "alt": "alternative",
+    "breader": "batter mix tempura",
+    "tempura": "tempura batter mix",
+    "controlled_vacuum_packed": "cvp",
+    "boneless_skinless": "boneless skinless",
+    "beer_battered": "battered",
 }
 WEAK_TOKENS = {
     "lb",
@@ -88,11 +97,24 @@ WEAK_TOKENS = {
     "grade",
     "fancy",
     "premium",
+    "natural",
+    "fall",
+    "target",
+    "average",
+    "optional",
+    "dual",
+    "tab",
+    "wild",
     "source",
     "west",
     "creek",
     "silver",
     "mark",
+    "clear",
+    "yellow",
+    "blue",
+    "vacuum",
+    "packed",
 }
 ATTRIBUTE_TERMS = {
     "boneless",
@@ -113,6 +135,11 @@ ATTRIBUTE_TERMS = {
     "fat",
     "free",
     "nonthermostabilized",
+    "battered",
+    "breaded",
+    "liquid",
+    "blend",
+    "alternative",
 }
 SIZE_UNIT_TOKENS = {"oz", "lb", "lbs", "ct", "count", "percent", "cmpt", "compartment"}
 
@@ -153,6 +180,8 @@ def clean_description_for_match(description: str) -> str:
 
     # Handle known slash-style shorthand before punctuation cleanup.
     text = text.replace("b/s", " boneless skinless ")
+    text = text.replace("_", " ")
+    text = text.replace("double lobe", "double")
 
     # Convert pound shorthand (#) into lb before punctuation cleanup.
     text = re.sub(r"#", " lb ", text)
@@ -173,6 +202,14 @@ def clean_description_for_match(description: str) -> str:
     text = text.replace("frozen french fries", "french fries")
     text = text.replace("french fries frozen", "french fries")
     text = text.replace("mozzarella shredded cheese", "mozzarella cheese shredded")
+    text = text.replace("ground fine beef", "beef ground fine")
+    text = text.replace("fine ground beef", "beef ground fine")
+    text = text.replace("tempura batter mix", "batter mix tempura")
+    text = text.replace("foam container hinged white 1 compartment", "container foam 1 compartment white hinged")
+    text = text.replace(
+        "chicken breast boneless skinless double 8 oz",
+        "chicken breast double boneless skinless 8 oz",
+    )
     text = re.sub(r"\s+", " ", text).strip()
 
     return text
@@ -222,24 +259,42 @@ def detect_family_alias(core_tokens: List[str], attribute_tokens: List[str]) -> 
     core = set(core_tokens)
     attr = set(attribute_tokens)
 
-    if {"chicken", "breast"}.issubset(core):
-        return "chicken breast"
-    if {"chicken", "wing"}.issubset(core):
-        return "chicken wing"
-    if "cream" in core and ("heavy" in attr or "whipping" in attr):
-        return "heavy whipping cream"
+    if {"onion", "rings"}.issubset(core):
+        return "onion rings"
     if {"avocado", "hass"}.issubset(core):
         return "avocado hass"
     if "bacon" in core and "sliced" in attr:
         return "bacon sliced"
-    if {"foam", "container"}.issubset(core):
+    if {"bacon", "topping", "diced"}.issubset(core | attr):
+        return "bacon topping diced"
+    if {"batter", "mix", "tempura"}.issubset(core | attr):
+        return "tempura batter mix"
+    if {"beef", "ground"}.issubset(core | attr):
+        return "ground beef"
+    if {"vegan", "burger", "patty"}.issubset(core | attr):
+        return "vegan burger patty"
+    if {"bleach", "germicidal"}.issubset(core | attr):
+        return "bleach germicidal"
+    if {"brioche", "bun"}.issubset(core | attr):
+        return "brioche bun"
+    if {"foam", "container"}.issubset(core | attr):
         return "foam container"
+    if {"cheddar", "cheese"}.issubset(core | attr):
+        return "cheddar cheese"
+    if {"mozzarella", "cheese"}.issubset(core | attr):
+        return "mozzarella cheese"
+    if {"chicken", "breast"}.issubset(core):
+        if {"boneless", "skinless"}.issubset(attr):
+            return "chicken breast boneless skinless"
+        return "chicken breast"
+    if {"chicken", "tender"}.issubset(core | attr) and "breaded" in attr:
+        return "chicken tender breaded"
+    if {"chicken", "wing"}.issubset(core):
+        return "chicken wing"
+    if "cream" in core and ("heavy" in attr or "whipping" in attr):
+        return "heavy whipping cream"
     if {"french", "fries"}.issubset(core):
         return "french fries"
-    if {"mozzarella", "cheese"}.issubset(core):
-        return "mozzarella cheese"
-    if {"cheddar", "cheese"}.issubset(core):
-        return "cheddar cheese"
     return ""
 
 
@@ -419,6 +474,7 @@ def parse_vendor_text(
             "core_tokens": [],
             "attribute_tokens": [],
             "size_tokens": [],
+            "product_family": "",
             "match_confidence": 0.0,
             "final_group_key": "",
         }
@@ -437,6 +493,7 @@ def parse_vendor_text(
                     "core_tokens": parsed_row["core_tokens"],
                     "attribute_tokens": parsed_row["attribute_tokens"],
                     "size_tokens": parsed_row["size_tokens"],
+                    "product_family": parsed_row["product_family"],
                     "match_confidence": parsed_row["match_confidence"],
                     "final_group_key": parsed_row["final_group_key"],
                 }
@@ -506,7 +563,7 @@ def build_comparison_rows(
         )
         tokens = build_meaningful_tokens(normalized_description)
         core_tokens, attribute_tokens, size_tokens = split_core_attribute_size_tokens(tokens)
-        family_alias = detect_family_alias(core_tokens, attribute_tokens)
+        product_family = detect_family_alias(core_tokens, attribute_tokens)
 
         # Find best existing group using:
         # - core token overlap (primary signal)
@@ -518,7 +575,7 @@ def build_comparison_rows(
         best_attribute_overlap = 0.0
         best_size_overlap = 0.0
         best_similarity = 0.0
-        best_alias_bonus = 0.0
+        best_family_bonus = 0.0
 
         for group_key, group_data in combined.items():
             group_core_tokens = list(group_data["core_tokens"])
@@ -528,12 +585,12 @@ def build_comparison_rows(
             attribute_overlap = token_overlap_score(attribute_tokens, group_attribute_tokens)
             size_overlap = token_overlap_score(size_tokens, group_size_tokens)
             similarity = SequenceMatcher(None, normalized_description, group_data["normalized"]).ratio()
-            alias_bonus = 1.0 if family_alias and family_alias == group_data.get("family_alias", "") else 0.0
+            family_bonus = 1.0 if product_family and product_family == group_data.get("product_family", "") else 0.0
             score = (
-                (0.55 * core_overlap)
-                + (0.25 * attribute_overlap)
-                + (0.10 * size_overlap)
-                + (0.10 * alias_bonus)
+                (0.45 * family_bonus)
+                + (0.35 * core_overlap)
+                + (0.15 * attribute_overlap)
+                + (0.05 * size_overlap)
             )
 
             if score > best_score:
@@ -543,7 +600,7 @@ def build_comparison_rows(
                 best_attribute_overlap = attribute_overlap
                 best_size_overlap = size_overlap
                 best_similarity = similarity
-                best_alias_bonus = alias_bonus
+                best_family_bonus = family_bonus
 
         # Match when products are "close enough" by simple thresholds.
         # Core words drive grouping; size words are only secondary.
@@ -551,15 +608,15 @@ def build_comparison_rows(
         should_match_existing = (
             best_key != ""
             and (
-                (best_core_overlap >= 0.50 and best_attribute_overlap >= 0.30)
-                or (best_alias_bonus > 0 and best_core_overlap >= 0.35)
+                (best_family_bonus > 0 and best_core_overlap >= 0.25)
+                or (best_core_overlap >= 0.50 and best_attribute_overlap >= 0.30)
                 or (best_core_overlap >= 0.60)
                 or (best_core_overlap >= 0.40 and best_similarity >= 0.78)
             )
             and match_confidence >= 0.62
         )
 
-        default_group_key = family_alias if family_alias else (" ".join(core_tokens) if core_tokens else normalized_description)
+        default_group_key = product_family if product_family else (" ".join(core_tokens) if core_tokens else normalized_description)
         final_group_key = best_key if should_match_existing else default_group_key
         if final_group_key == "":
             final_group_key = "(no description)"
@@ -571,7 +628,7 @@ def build_comparison_rows(
                 "core_tokens": set(core_tokens),
                 "attribute_tokens": set(attribute_tokens),
                 "size_tokens": set(size_tokens),
-                "family_alias": family_alias,
+                "product_family": product_family,
                 "sysco": None,
                 "us_foods": None,
                 "pfg": None,
@@ -589,6 +646,7 @@ def build_comparison_rows(
         row["core_tokens"] = core_tokens
         row["attribute_tokens"] = attribute_tokens
         row["size_tokens"] = size_tokens
+        row["product_family"] = product_family
         row["match_confidence"] = round(match_confidence, 2)
         row["final_group_key"] = final_group_key
         row["final_tokens"] = tokens
@@ -596,6 +654,7 @@ def build_comparison_rows(
             {
                 "description": original_description,
                 "normalized_description": normalized_description,
+                "product_family": product_family,
                 "core_tokens": ", ".join(core_tokens),
                 "attribute_tokens": ", ".join(attribute_tokens),
                 "size_tokens": ", ".join(size_tokens),

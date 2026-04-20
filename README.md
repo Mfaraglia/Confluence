@@ -33,6 +33,12 @@ You upload CSV files from Sysco, US Foods, and PFG, and the app builds one compa
   - `ref` → `refrigerated`
   - `fc` → `fully cooked`
   - `slcd` → `sliced`
+  - `lqd` → `liquid`
+  - `blnd` → `blend`
+  - `alt` / `alternative` → `alternative`
+  - `bb` / `beer_battered` / `battered` → `battered`
+  - `breader` / `tempura` / `batter mix` normalize together
+  - `controlled_vacuum_packed` / `cvp` normalize together
   - `ff` or `fries french` → `french fries`
   - `#` → `lb`
   It also applies a small order fix like `mozzarella shredded cheese` → `mozzarella cheese shredded`.
@@ -40,8 +46,9 @@ You upload CSV files from Sysco, US Foods, and PFG, and the app builds one compa
   - It splits normalized descriptions into tokens (words).
   - It removes weak tokens (for example: `raw`, `fresh`, `frozen`, `pack`, `source`, `west`, `creek`, `silver`, `mark`) so they do not control grouping.
   - It separates tokens into `core_tokens`, `attribute_tokens`, and `size_tokens`.
-  - It groups mainly by core tokens, then attributes, and uses size tokens only as weaker support.
-  - It adds product-family aliases for common categories such as `chicken breast`, `heavy whipping cream`, `foam container`, `french fries`, and cheese types.
+  - It groups mainly by product family first, then core tokens, then attribute tokens.
+  - It uses size/pack tokens as weaker tie-breakers only.
+  - It adds product-family aliases for common categories such as onion rings, tempura batter mix, ground beef, foam container, chicken breast boneless skinless, heavy cream, and more.
   - It computes a simple match confidence score; high-confidence matches auto-group, low-confidence matches stay separate.
   - It now separates tokens into:
     - **core_tokens** (main food words, primary grouping signal)
