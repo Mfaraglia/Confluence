@@ -79,11 +79,13 @@ You upload CSV files from Sysco, US Foods, and PFG, and the app builds one compa
 - It now includes a **Possible Matches** review section:
   - high-confidence matches auto-group
   - medium-confidence matches are shown for human review
+  - additional rule-based candidates are also sent to review (same family, strong core overlap, size/pack overlap with shared core, shorthand vs long wording)
   - low-confidence matches stay separate
   You can click **Match** or **Keep Separate**.
 - Review memory is saved locally in `match_memory.json`:
   - confirmed pairs are remembered and auto-grouped next time
   - rejected pairs are remembered and not suggested again
+  - for active-session reliability, confirmed/rejected decisions are also mirrored in server-side session memory
 - It now supports **manual column mapping** when headers are not obvious:
   - Product Description
   - Item Number

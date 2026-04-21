@@ -411,6 +411,7 @@
           <div class="debug-card">
             <p><strong>Vendor 1 description:</strong> {{ candidate.vendor_1_description }}</p>
             <p><strong>Vendor 2 description:</strong> {{ candidate.vendor_2_description }}</p>
+            <p><strong>Suggested reason(s):</strong> {{ candidate.reasons }}</p>
             <p><strong>Confidence:</strong> {{ candidate.confidence }}</p>
             <form method="POST" style="display:inline-block; margin-right:8px;">
               <input type="hidden" name="action" value="review_decision">
@@ -436,6 +437,24 @@
             </form>
           </div>
         {% endfor %}
+      </section>
+    {% endif %}
+
+    {% if review_stats %}
+      <section class="debug" aria-label="Review generation debug">
+        <h2>Review Generation Debug</h2>
+        <p><strong>Possible matches generated:</strong> {{ review_stats.possible_matches_generated }}</p>
+        <p><strong>Auto-grouped:</strong> {{ review_stats.auto_grouped }}</p>
+        <p><strong>Sent to review:</strong> {{ review_stats.sent_to_review }}</p>
+        <p><strong>Left unmatched:</strong> {{ review_stats.left_unmatched }}</p>
+        {% if review_stats.review_reasons %}
+          <p><strong>Why items were included in review:</strong></p>
+          <ul class="debug-list">
+            {% for reason in review_stats.review_reasons %}
+              <li>{{ reason }}</li>
+            {% endfor %}
+          </ul>
+        {% endif %}
       </section>
     {% endif %}
 

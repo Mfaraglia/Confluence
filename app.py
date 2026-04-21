@@ -676,13 +676,17 @@ def parse_vendor_csv(
 # Combine rows from all vendors using token-overlap + similarity matching.
 def build_comparison_rows(
     rows: List[Dict[str, Optional[float]]], match_memory: Dict[str, Any]
-) -> Tuple[List[Dict[str, str]], List[Dict[str, str]], List[Dict[str, str]]]:
+) -> Tuple[List[Dict[str, str]], List[Dict[str, str]], List[Dict[str, str]], Dict[str, Any]]:
     combined: Dict[str, Dict[str, Any]] = {}
     match_debug_rows: List[Dict[str, str]] = []
     possible_matches: List[Dict[str, str]] = []
+    review_stats: Dict[str, Any] = {}
+    review_pair_keys: set[str] = set()
+    review_debug_reasons: List[str] = []
 
     high_conf_threshold = 0.80
     medium_conf_threshold = 0.60
+    stats = {"auto_grouped": 0, "sent_to_review": 0, "left_unmatched": 0}
 
     for row in rows:
         original_description = (row.get("description") or "").strip()
@@ -717,6 +721,10 @@ def build_comparison_rows(
         best_group_key = ""
         best_confidence = 0.0
         best_candidate_description = ""
+        best_core_overlap = 0.0
+        best_attribute_overlap = 0.0
+        best_size_overlap = 0.0
+        best_candidate_alias_expanded = ""
         for group_key, group_data in combined.items():
             core_overlap = token_overlap_score(core_tokens, list(group_data["core_tokens"]))
             attribute_overlap = token_overlap_score(attribute_tokens, list(group_data["attribute_tokens"]))
@@ -732,6 +740,10 @@ def build_comparison_rows(
                 best_confidence = confidence
                 best_group_key = group_key
                 best_candidate_description = str(group_data["display_description"])
+                best_core_overlap = core_overlap
+                best_attribute_overlap = attribute_overlap
+                best_size_overlap = size_overlap
+                best_candidate_alias_expanded = str(group_data.get("normalized", ""))
 
         confirmed_group = ""
         if best_group_key:
@@ -745,27 +757,62 @@ def build_comparison_rows(
         if confirmed_group:
             final_group_key = confirmed_group
             match_confidence = 1.0
+            stats["auto_grouped"] += 1
         elif best_group_key and (not is_rejected) and best_confidence >= high_conf_threshold:
             final_group_key = best_group_key
             match_confidence = best_confidence
-        elif best_group_key and (not is_rejected) and best_confidence >= medium_conf_threshold:
-            # Medium confidence: suggest review, do not auto-group.
-            possible_matches.append(
-                {
-                    "review_id": str(uuid.uuid4()),
-                    "vendor_1_description": original_description,
-                    "vendor_2_description": best_candidate_description,
-                    "confidence": f"{best_confidence:.2f}",
-                    "pair_key": pair_key,
-                    "proposed_group_key": best_group_key,
-                }
-            )
+            stats["auto_grouped"] += 1
+        elif best_group_key and (not is_rejected):
+            review_reasons: List[str] = []
+            if best_confidence >= medium_conf_threshold:
+                review_reasons.append("medium confidence")
+            if product_family and product_family == combined.get(best_group_key, {}).get("product_family", ""):
+                review_reasons.append("same product_family")
+            if best_core_overlap >= 0.50:
+                review_reasons.append("strong core token overlap")
+            if best_size_overlap >= 0.40 and best_core_overlap >= 0.20:
+                review_reasons.append("similar size/pack")
+            if token_overlap_score(
+                build_meaningful_tokens(alias_expanded_description),
+                build_meaningful_tokens(best_candidate_alias_expanded),
+            ) >= 0.45:
+                review_reasons.append("alias/synonym overlap")
+
+            left_tokens = original_description.lower().split()
+            right_tokens = best_candidate_description.lower().split()
+            left_has_shorthand = any("/" in t or "_" in t or len(t) <= 3 for t in left_tokens)
+            right_has_shorthand = any("/" in t or "_" in t or len(t) <= 3 for t in right_tokens)
+            if left_has_shorthand != right_has_shorthand and best_core_overlap >= 0.20:
+                review_reasons.append("shorthand vs long description")
+
+            should_review = len(review_reasons) > 0
+            if should_review and pair_key and pair_key not in review_pair_keys:
+                review_pair_keys.add(pair_key)
+                possible_matches.append(
+                    {
+                        "review_id": str(uuid.uuid4()),
+                        "vendor_1_description": original_description,
+                        "vendor_2_description": best_candidate_description,
+                        "confidence": f"{best_confidence:.2f}",
+                        "pair_key": pair_key,
+                        "proposed_group_key": best_group_key,
+                        "reasons": ", ".join(review_reasons),
+                    }
+                )
+                review_debug_reasons.append(
+                    f"{original_description} <> {best_candidate_description} because: {', '.join(review_reasons)}"
+                )
+                stats["sent_to_review"] += 1
+
             final_group_key = f"{product_family}::{normalized_description}"
             match_confidence = best_confidence
+            if not should_review:
+                stats["left_unmatched"] += 1
         else:
             # Low confidence (or rejected): keep separate.
             final_group_key = f"{product_family}::{normalized_description}"
             match_confidence = best_confidence if best_group_key else 1.0
+            stats["left_unmatched"] += 1
 
         if final_group_key not in combined:
             combined[final_group_key] = {
@@ -856,7 +903,15 @@ def build_comparison_rows(
             }
         )
 
-    return output, match_debug_rows, possible_matches
+    review_stats = {
+        "possible_matches_generated": len(possible_matches),
+        "review_reasons": review_debug_reasons,
+        "auto_grouped": stats["auto_grouped"],
+        "sent_to_review": stats["sent_to_review"],
+        "left_unmatched": stats["left_unmatched"],
+    }
+
+    return output, match_debug_rows, possible_matches, review_stats
 
 
 @app.route("/", methods=["GET", "POST"])
@@ -1071,7 +1126,7 @@ def index():
             errors.append("Please upload at least one CSV file.")
 
         if all_vendor_rows and not show_mapping_form:
-            comparison_rows, match_debug_rows, possible_matches = build_comparison_rows(
+            comparison_rows, match_debug_rows, possible_matches, review_stats = build_comparison_rows(
                 all_vendor_rows, match_memory
             )
         elif show_mapping_form and not errors:
@@ -1084,6 +1139,7 @@ def index():
         debug_details=debug_details,
         match_debug_rows=match_debug_rows,
         possible_matches=possible_matches,
+        review_stats=review_stats,
         upload_debug=upload_debug,
         show_mapping_form=show_mapping_form,
         mapping_options=mapping_options,
