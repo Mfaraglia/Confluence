@@ -329,6 +329,27 @@
       </div>
     {% endif %}
 
+    {% if fatal_error %}
+      <div class="errors" role="alert">
+        <strong>Readable Error Details</strong>
+        <ul>
+          <li><strong>Step failed:</strong> {{ fatal_error.failed_step }}</li>
+          <li><strong>Exception type:</strong> {{ fatal_error.exception_type }}</li>
+          <li><strong>Exception message:</strong> {{ fatal_error.exception_message }}</li>
+        </ul>
+      </div>
+    {% endif %}
+
+    {% if debug_counters %}
+      <section class="debug" aria-label="Render debug counters">
+        <h2>Render Debug Counters</h2>
+        <p><strong>Rows parsed per vendor:</strong> Sysco={{ debug_counters.rows_parsed_per_vendor.Sysco if debug_counters.rows_parsed_per_vendor else 0 }}, US Foods={{ debug_counters.rows_parsed_per_vendor["US Foods"] if debug_counters.rows_parsed_per_vendor else 0 }}, PFG={{ debug_counters.rows_parsed_per_vendor.PFG if debug_counters.rows_parsed_per_vendor else 0 }}</p>
+        <p><strong>Rows grouped:</strong> {{ debug_counters.rows_grouped if debug_counters.rows_grouped is not none else 0 }}</p>
+        <p><strong>Review candidates generated:</strong> {{ debug_counters.review_candidates_generated if debug_counters.review_candidates_generated is not none else 0 }}</p>
+        <p><strong>Confirmed matches loaded:</strong> {{ debug_counters.confirmed_matches_loaded if debug_counters.confirmed_matches_loaded is not none else 0 }}</p>
+      </section>
+    {% endif %}
+
     {% if debug_details %}
       <section class="debug" aria-label="CSV debug details">
         <h2>CSV Parse Debug</h2>

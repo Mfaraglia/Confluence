@@ -11,6 +11,8 @@ from manual_overrides import MANUAL_MATCH_OVERRIDES
 app = Flask(__name__)
 app.secret_key = "dev-secret-key-change-me"
 MATCH_MEMORY_FILE = "match_memory.json"
+# Preview-safe mode: avoid depending on local file writes (can fail on Vercel).
+ENABLE_FILE_PERSISTENCE = False
 
 # Simple in-memory cache for uploaded CSV text between two submits:
 # 1) upload file(s)
@@ -33,6 +35,8 @@ def load_match_memory() -> Dict[str, Any]:
 
 
 def save_match_memory(memory: Dict[str, Any]) -> None:
+    if not ENABLE_FILE_PERSISTENCE:
+        return
     with open(MATCH_MEMORY_FILE, "w", encoding="utf-8") as f:
         json.dump(
             {
@@ -42,6 +46,40 @@ def save_match_memory(memory: Dict[str, Any]) -> None:
             f,
             indent=2,
         )
+
+
+def build_basic_comparison_rows(rows: List[Dict[str, Optional[float]]]) -> List[Dict[str, str]]:
+    # Emergency fallback if advanced grouping fails.
+    combined: Dict[str, Dict[str, Optional[float]]] = {}
+    for row in rows:
+        description = str((row.get("description") or "").strip() or "(No description)")
+        if description not in combined:
+            combined[description] = {"sysco": None, "us_foods": None, "pfg": None}
+
+        vendor = row.get("vendor")
+        price = row.get("price")
+        if vendor == "Sysco":
+            combined[description]["sysco"] = price
+        elif vendor == "US Foods":
+            combined[description]["us_foods"] = price
+        elif vendor == "PFG":
+            combined[description]["pfg"] = price
+
+    output: List[Dict[str, str]] = []
+    for description, prices in combined.items():
+        vendor_prices = {"Sysco": prices["sysco"], "US Foods": prices["us_foods"], "PFG": prices["pfg"]}
+        available = {k: v for k, v in vendor_prices.items() if v is not None}
+        cheapest_vendor = min(available, key=available.get) if available else ""
+        output.append(
+            {
+                "description": description,
+                "sysco": f"${prices['sysco']:.2f}" if prices["sysco"] is not None else "",
+                "us_foods": f"${prices['us_foods']:.2f}" if prices["us_foods"] is not None else "",
+                "pfg": f"${prices['pfg']:.2f}" if prices["pfg"] is not None else "",
+                "cheapest_vendor": cheapest_vendor,
+            }
+        )
+    return output
 
 
 def build_pair_key(left: str, right: str) -> str:
@@ -919,9 +957,11 @@ def index():
     comparison_rows: List[Dict[str, str]] = []
     match_debug_rows: List[Dict[str, str]] = []
     possible_matches: List[Dict[str, str]] = []
+    review_stats: Dict[str, Any] = {}
     errors: List[str] = []
     review_success_messages: List[str] = []
     review_error_messages: List[str] = []
+    fatal_error: Optional[Dict[str, str]] = None
     debug_details: List[Dict[str, Any]] = []
     mapping_options: Dict[str, Any] = {}
     show_mapping_form = False
@@ -929,92 +969,78 @@ def index():
     upload_debug: Dict[str, Any] = {
         "request_method": request.method,
         "files_keys": [],
-        "received": {
-            "Sysco": False,
-            "US Foods": False,
-            "PFG": False,
-        },
+        "received": {"Sysco": False, "US Foods": False, "PFG": False},
+    }
+    debug_counters: Dict[str, Any] = {
+        "rows_parsed_per_vendor": {"Sysco": 0, "US Foods": 0, "PFG": 0},
+        "rows_grouped": 0,
+        "review_candidates_generated": 0,
+        "confirmed_matches_loaded": 0,
     }
 
     if request.method == "POST":
+        failed_step = "initialization"
         all_vendor_rows: List[Dict[str, Optional[float]]] = []
         action = request.form.get("action", "upload")
-        upload_id = request.form.get("upload_id", "")
-        match_memory = load_match_memory()
-        session_id = get_session_id()
-        session_memory = SESSION_REVIEW_MEMORY.get(session_id, {"confirmed": {}, "rejected": set()})
-        match_memory["confirmed"].update(session_memory.get("confirmed", {}))
-        match_memory["rejected"].update(set(session_memory.get("rejected", set())))
-        fallback_memory = session.get("match_memory_fallback", {})
-        if isinstance(fallback_memory, dict):
-            match_memory["confirmed"].update(fallback_memory.get("confirmed", {}))
-            match_memory["rejected"].update(set(fallback_memory.get("rejected", [])))
+        try:
+            upload_id = request.form.get("upload_id", "")
+            match_memory = load_match_memory()
+            debug_counters["confirmed_matches_loaded"] = len(match_memory.get("confirmed", {}))
 
-        # File uploads require multipart/form-data in the HTML form.
-        # If the form is not multipart, request.files will be empty.
-        upload_debug["files_keys"] = list(request.files.keys())
+            session_id = get_session_id()
+            session_memory = SESSION_REVIEW_MEMORY.get(session_id, {"confirmed": {}, "rejected": set()})
+            match_memory["confirmed"].update(session_memory.get("confirmed", {}))
+            match_memory["rejected"].update(set(session_memory.get("rejected", set())))
+            fallback_memory = session.get("match_memory_fallback", {})
+            if isinstance(fallback_memory, dict):
+                match_memory["confirmed"].update(fallback_memory.get("confirmed", {}))
+                match_memory["rejected"].update(set(fallback_memory.get("rejected", [])))
 
-        # IMPORTANT: request.files names must exactly match the HTML input name attributes.
-        # Example: <input name="sysco_file"> must be read with request.files.get("sysco_file").
-        sysco_file = request.files.get("sysco_file")
-        usfoods_file = request.files.get("usfoods_file")
-        pfg_file = request.files.get("pfg_file")
+            failed_step = "file upload"
+            upload_debug["files_keys"] = list(request.files.keys())
+            sysco_file = request.files.get("sysco_file")
+            usfoods_file = request.files.get("usfoods_file")
+            pfg_file = request.files.get("pfg_file")
+            upload_debug["received"]["Sysco"] = bool(sysco_file and sysco_file.filename)
+            upload_debug["received"]["US Foods"] = bool(usfoods_file and usfoods_file.filename)
+            upload_debug["received"]["PFG"] = bool(pfg_file and pfg_file.filename)
 
-        upload_debug["received"]["Sysco"] = bool(sysco_file and sysco_file.filename)
-        upload_debug["received"]["US Foods"] = bool(usfoods_file and usfoods_file.filename)
-        upload_debug["received"]["PFG"] = bool(pfg_file and pfg_file.filename)
+            vendor_keys = [("Sysco", "sysco_file", "sysco"), ("US Foods", "usfoods_file", "usfoods"), ("PFG", "pfg_file", "pfg")]
 
-        vendor_keys = [
-            ("Sysco", "sysco_file", "sysco"),
-            ("US Foods", "usfoods_file", "usfoods"),
-            ("PFG", "pfg_file", "pfg"),
-        ]
+            if action == "upload":
+                upload_id = str(uuid.uuid4())
+                UPLOAD_CACHE[upload_id] = {}
+                session["last_upload_id"] = upload_id
+                vendors = [("Sysco", sysco_file), ("US Foods", usfoods_file), ("PFG", pfg_file)]
+                for vendor_name, file_obj in vendors:
+                    failed_step = "header detection"
+                    rows, file_errors, debug_info, file_text = parse_vendor_csv(vendor_name, file_obj)
+                    all_vendor_rows.extend(rows)
+                    debug_counters["rows_parsed_per_vendor"][vendor_name] += len(rows)
+                    errors.extend(file_errors)
+                    debug_details.append(debug_info)
+                    if file_text.strip():
+                        UPLOAD_CACHE[upload_id][vendor_name] = file_text
+                    if debug_info.get("uploaded"):
+                        missing_required = not debug_info["selected_columns"].get("description") or not debug_info["selected_columns"].get("price")
+                        if missing_required:
+                            show_mapping_form = True
+                            vendor_key = next((key for name, _, key in vendor_keys if name == vendor_name), "")
+                            mapping_options[vendor_key] = {
+                                "vendor_name": vendor_name,
+                                "headers": debug_info.get("headers", []),
+                                "selected": debug_info.get("selected_columns", {}),
+                            }
 
-        # Step 1: user uploads files. We parse headers and store raw text for optional mapping step.
-        if action == "upload":
-            upload_id = str(uuid.uuid4())
-            UPLOAD_CACHE[upload_id] = {}
-            session["last_upload_id"] = upload_id
-
-            vendors = [
-                ("Sysco", sysco_file),
-                ("US Foods", usfoods_file),
-                ("PFG", pfg_file),
-            ]
-
-            for vendor_name, file_obj in vendors:
-                rows, file_errors, debug_info, file_text = parse_vendor_csv(vendor_name, file_obj)
-                all_vendor_rows.extend(rows)
-                errors.extend(file_errors)
-                debug_details.append(debug_info)
-
-                if file_text.strip():
-                    UPLOAD_CACHE[upload_id][vendor_name] = file_text
-
-                if debug_info.get("uploaded"):
-                    missing_required = not debug_info["selected_columns"].get("description") or not debug_info[
-                        "selected_columns"
-                    ].get("price")
-                    if missing_required:
-                        show_mapping_form = True
-                        vendor_key = next((key for name, _, key in vendor_keys if name == vendor_name), "")
-                        mapping_options[vendor_key] = {
-                            "vendor_name": vendor_name,
-                            "headers": debug_info.get("headers", []),
-                            "selected": debug_info.get("selected_columns", {}),
-                        }
-
-        # Step 2: user applies manual mapping. We parse from cached CSV text.
-        elif action == "apply_mapping":
-            if not upload_id:
-                upload_id = session.get("last_upload_id", "")
-            cached_vendor_files = UPLOAD_CACHE.get(upload_id, {})
-
-            for vendor_name, _, vendor_key in vendor_keys:
-                file_text = cached_vendor_files.get(vendor_name, "")
-                if not file_text:
-                    debug_details.append(
-                        {
+            elif action == "apply_mapping":
+                failed_step = "parsing"
+                if not upload_id:
+                    upload_id = session.get("last_upload_id", "")
+                cached_vendor_files = UPLOAD_CACHE.get(upload_id, {})
+                for vendor_name, _, vendor_key in vendor_keys:
+                    file_text = cached_vendor_files.get(vendor_name, "")
+                    if not file_text:
+                        debug_details.append({
                             "vendor": vendor_name,
                             "uploaded": False,
                             "headers": [],
@@ -1026,111 +1052,120 @@ def index():
                             "mapping_needed": False,
                             "header_row_index": 0,
                             "skipped_intro_rows": 0,
+                        })
+                        continue
+                    mapping = {
+                        "description": request.form.get(f"{vendor_key}_description", ""),
+                        "item_number": request.form.get(f"{vendor_key}_item_number", ""),
+                        "pack_size": request.form.get(f"{vendor_key}_pack_size", ""),
+                        "price": request.form.get(f"{vendor_key}_price", ""),
+                    }
+                    rows, file_errors, debug_info = parse_vendor_text(vendor_name, file_text, mapping)
+                    all_vendor_rows.extend(rows)
+                    debug_counters["rows_parsed_per_vendor"][vendor_name] += len(rows)
+                    errors.extend(file_errors)
+                    debug_details.append(debug_info)
+                    if debug_info.get("mapping_needed"):
+                        show_mapping_form = True
+                        mapping_options[vendor_key] = {
+                            "vendor_name": vendor_name,
+                            "headers": debug_info.get("headers", []),
+                            "selected": debug_info.get("selected_columns", {}),
                         }
+
+            elif action == "review_decision":
+                failed_step = "review save"
+                try:
+                    decision = request.form.get("decision", "")
+                    vendor_1_description = request.form.get("vendor_1_description", "")
+                    vendor_2_description = request.form.get("vendor_2_description", "")
+                    proposed_group_key = request.form.get("proposed_group_key", "")
+                    review_id = request.form.get("review_id", "")
+                    pair_key = request.form.get("pair_key", "") or build_pair_key(vendor_1_description, vendor_2_description)
+                    debug_prefix = (
+                        f"Review submission id={review_id}, action={decision}, item1='{vendor_1_description}', "
+                        f"item2='{vendor_2_description}', proposed_group_key='{proposed_group_key}'"
                     )
-                    continue
+                    if pair_key and decision == "match":
+                        match_memory["confirmed"][pair_key] = proposed_group_key
+                        match_memory["rejected"].discard(pair_key)
+                    elif pair_key and decision == "keep_separate":
+                        match_memory["rejected"].add(pair_key)
+                        match_memory["confirmed"].pop(pair_key, None)
+                    else:
+                        raise ValueError("Missing required review fields or unknown decision value.")
 
-                mapping = {
-                    "description": request.form.get(f"{vendor_key}_description", ""),
-                    "item_number": request.form.get(f"{vendor_key}_item_number", ""),
-                    "pack_size": request.form.get(f"{vendor_key}_pack_size", ""),
-                    "price": request.form.get(f"{vendor_key}_price", ""),
-                }
-                rows, file_errors, debug_info = parse_vendor_text(vendor_name, file_text, mapping)
-                all_vendor_rows.extend(rows)
-                errors.extend(file_errors)
-                debug_details.append(debug_info)
+                    storage_location = "server_memory_fallback"
+                    save_status = "succeeded"
+                    try:
+                        save_match_memory(match_memory)
+                        if ENABLE_FILE_PERSISTENCE:
+                            storage_location = "local_file"
+                    except Exception:
+                        storage_location = "server_memory_fallback"
 
-                if debug_info.get("mapping_needed"):
-                    show_mapping_form = True
-                    mapping_options[vendor_key] = {
-                        "vendor_name": vendor_name,
-                        "headers": debug_info.get("headers", []),
-                        "selected": debug_info.get("selected_columns", {}),
+                    SESSION_REVIEW_MEMORY[session_id] = {
+                        "confirmed": dict(match_memory.get("confirmed", {})),
+                        "rejected": set(match_memory.get("rejected", set())),
+                    }
+                    session["match_memory_fallback"] = {
+                        "confirmed": match_memory.get("confirmed", {}),
+                        "rejected": sorted(list(match_memory.get("rejected", set()))),
                     }
 
-        # Step 3: user confirms/rejects possible match suggestion.
-        elif action == "review_decision":
-            try:
-                decision = request.form.get("decision", "")
-                vendor_1_description = request.form.get("vendor_1_description", "")
-                vendor_2_description = request.form.get("vendor_2_description", "")
-                proposed_group_key = request.form.get("proposed_group_key", "")
-                review_id = request.form.get("review_id", "")
-                pair_key = request.form.get("pair_key", "") or build_pair_key(
-                    vendor_1_description, vendor_2_description
-                )
+                    message = f"{debug_prefix}, save_status={save_status}, stored_in={storage_location}"
+                    print(message)
+                    review_success_messages.append(message)
+                except Exception as exc:
+                    error_message = f"Review submission error: {exc}"
+                    print(error_message)
+                    review_error_messages.append(error_message)
 
-                debug_prefix = (
-                    f"Review submission id={review_id}, action={decision}, "
-                    f"item1='{vendor_1_description}', item2='{vendor_2_description}', "
-                    f"proposed_group_key='{proposed_group_key}'"
-                )
+                if not upload_id:
+                    upload_id = session.get("last_upload_id", "")
+                cached_vendor_files = UPLOAD_CACHE.get(upload_id, {})
+                for vendor_name, _, _ in vendor_keys:
+                    file_text = cached_vendor_files.get(vendor_name, "")
+                    if not file_text:
+                        continue
+                    rows, file_errors, debug_info = parse_vendor_text(vendor_name, file_text, None)
+                    all_vendor_rows.extend(rows)
+                    debug_counters["rows_parsed_per_vendor"][vendor_name] += len(rows)
+                    errors.extend(file_errors)
+                    debug_details.append(debug_info)
 
-                save_status = "failed"
-                storage_location = "none"
-                if pair_key and decision == "match":
-                    match_memory["confirmed"][pair_key] = proposed_group_key
-                    match_memory["rejected"].discard(pair_key)
-                elif pair_key and decision == "keep_separate":
-                    match_memory["rejected"].add(pair_key)
-                    match_memory["confirmed"].pop(pair_key, None)
-                else:
-                    raise ValueError("Missing required review fields or unknown decision value.")
+            if not all_vendor_rows and not errors and action == "upload":
+                errors.append("Please upload at least one CSV file.")
 
+            if all_vendor_rows and not show_mapping_form:
+                failed_step = "review candidate generation"
                 try:
-                    save_match_memory(match_memory)
-                    save_status = "succeeded"
-                    storage_location = "local_file"
-                except Exception:
-                    save_status = "succeeded"
-                    storage_location = "server_memory_fallback"
-
-                # Always mirror memory to server-side in-memory store for stable active-session behavior.
-                SESSION_REVIEW_MEMORY[session_id] = {
-                    "confirmed": dict(match_memory.get("confirmed", {})),
-                    "rejected": set(match_memory.get("rejected", set())),
-                }
-                session["match_memory_fallback"] = {
-                    "confirmed": match_memory.get("confirmed", {}),
-                    "rejected": sorted(list(match_memory.get("rejected", set()))),
-                }
-
-                print(f"{debug_prefix}, save_status={save_status}, stored_in={storage_location}")
-                if save_status.startswith("succeeded"):
-                    review_success_messages.append(
-                        f"{debug_prefix}, save_status={save_status}, stored_in={storage_location}"
+                    comparison_rows, match_debug_rows, possible_matches, review_stats = build_comparison_rows(
+                        all_vendor_rows, match_memory
                     )
-                else:
-                    review_error_messages.append(
-                        f"{debug_prefix}, save_status={save_status}, stored_in={storage_location}"
-                    )
-            except Exception as exc:
-                error_message = f"Review submission error: {exc}"
-                print(error_message)
-                review_error_messages.append(error_message)
+                except Exception as exc:
+                    # Keep rendering table if review generation fails.
+                    errors.append("Warning: Review candidate generation failed; showing comparison table fallback.")
+                    review_error_messages.append(f"Failure at step 'review candidate generation': {type(exc).__name__} - {exc}")
+                    print(f"Failure at step 'review candidate generation': {type(exc).__name__}: {exc}")
+                    comparison_rows = build_basic_comparison_rows(all_vendor_rows)
+                    possible_matches = []
+                    match_debug_rows = []
 
-            if not upload_id:
-                upload_id = session.get("last_upload_id", "")
-            cached_vendor_files = UPLOAD_CACHE.get(upload_id, {})
-            for vendor_name, _, _ in vendor_keys:
-                file_text = cached_vendor_files.get(vendor_name, "")
-                if not file_text:
-                    continue
-                rows, file_errors, debug_info = parse_vendor_text(vendor_name, file_text, None)
-                all_vendor_rows.extend(rows)
-                errors.extend(file_errors)
-                debug_details.append(debug_info)
+                debug_counters["rows_grouped"] = len(comparison_rows)
+                debug_counters["review_candidates_generated"] = len(possible_matches)
+                review_stats["debug_counters"] = debug_counters
+            elif show_mapping_form and not errors:
+                errors.append("Please choose manual column mappings, then click Apply Column Mapping.")
 
-        if not all_vendor_rows and not errors and action == "upload":
-            errors.append("Please upload at least one CSV file.")
-
-        if all_vendor_rows and not show_mapping_form:
-            comparison_rows, match_debug_rows, possible_matches, review_stats = build_comparison_rows(
-                all_vendor_rows, match_memory
-            )
-        elif show_mapping_form and not errors:
-            errors.append("Please choose manual column mappings, then click Apply Column Mapping.")
+        except Exception as exc:
+            fatal_error = {
+                "exception_type": type(exc).__name__,
+                "exception_message": str(exc),
+                "failed_step": failed_step,
+            }
+            review_error_messages.append(f"Failure at step '{failed_step}': {type(exc).__name__} - {exc}")
+            print(f"Failure at step '{failed_step}': {type(exc).__name__}: {exc}")
 
     return render_template(
         "index.html",
@@ -1146,7 +1181,34 @@ def index():
         upload_id=upload_id,
         review_success_messages=review_success_messages,
         review_error_messages=review_error_messages,
+        fatal_error=fatal_error,
+        debug_counters=debug_counters,
     )
+
+
+@app.errorhandler(500)
+def handle_internal_server_error(error):
+    # Global fallback so preview shows readable error details.
+    return render_template(
+        "index.html",
+        rows=[],
+        errors=[],
+        debug_details=[],
+        match_debug_rows=[],
+        possible_matches=[],
+        upload_debug={"request_method": request.method, "files_keys": [], "received": {"Sysco": False, "US Foods": False, "PFG": False}},
+        show_mapping_form=False,
+        mapping_options={},
+        upload_id="",
+        review_success_messages=[],
+        review_error_messages=[],
+        fatal_error={
+            "exception_type": type(error).__name__,
+            "exception_message": str(error),
+            "failed_step": "global_500_handler",
+        },
+        debug_counters={},
+    ), 500
 
 
 if __name__ == "__main__":
