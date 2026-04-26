@@ -479,6 +479,130 @@
       </section>
     {% endif %}
 
+    {% if match_review_buckets %}
+      <section class="debug" aria-label="Match review matrix">
+        <h2>Match Review</h2>
+        <p class="muted">Every US Foods and PFG item appears in exactly one bucket below.</p>
+
+        {% if match_matrix_stats %}
+          <div class="debug-summary">
+            <strong>Pairwise Matrix Counters</strong>
+            <ul>
+              <li>Total US Foods items: {{ match_matrix_stats.total_us_foods_items }}</li>
+              <li>Total PFG items: {{ match_matrix_stats.total_pfg_items }}</li>
+              <li>Total pair comparisons created: {{ match_matrix_stats.total_pair_comparisons_created }}</li>
+              <li>High confidence matches: {{ match_matrix_stats.high_confidence_matches }}</li>
+              <li>Needs review: {{ match_matrix_stats.needs_review }}</li>
+              <li>No likely match found: {{ match_matrix_stats.no_match_found }}</li>
+            </ul>
+          </div>
+        {% endif %}
+
+        <h3>High confidence auto-matches</h3>
+        {% for entry in match_review_buckets.high_confidence_auto_matches %}
+          <div class="debug-card">
+            <p><strong>{{ entry.source_vendor }} item:</strong> {{ entry.source_description }}</p>
+            {% if entry.top_candidates %}
+              <p><strong>Top match:</strong> {{ entry.top_candidates[0].vendor_2_description }} (score {{ entry.top_candidates[0].score }})</p>
+            {% else %}
+              <p class="muted">No candidate rows available.</p>
+            {% endif %}
+          </div>
+        {% endfor %}
+
+        <h3>Needs review</h3>
+        {% for entry in match_review_buckets.needs_review %}
+          <div class="debug-card">
+            <p><strong>{{ entry.source_vendor }} item:</strong> {{ entry.source_description }}</p>
+            {% if entry.top_candidates %}
+              <ul class="debug-list">
+                {% for candidate in entry.top_candidates %}
+                  <li>
+                    {{ candidate.vendor_2_description }} | score={{ candidate.score }} | family_match={{ candidate.product_family_match }} |
+                    shared_core="{{ candidate.shared_core_tokens if candidate.shared_core_tokens else 'none' }}" |
+                    alias_overlap={{ candidate.alias_overlap }} | description_similarity={{ candidate.description_similarity }} | size_overlap={{ candidate.size_overlap }}
+                  </li>
+                {% endfor %}
+              </ul>
+
+              <form method="POST" style="display:inline-block; margin-right:8px;">
+                <input type="hidden" name="action" value="review_decision">
+                <input type="hidden" name="upload_id" value="{{ upload_id }}">
+                <input type="hidden" name="review_id" value="{{ entry.top_candidates[0].review_id }}">
+                <input type="hidden" name="vendor_1_description" value="{{ entry.source_description }}">
+                <input type="hidden" name="vendor_2_description" value="{{ entry.top_candidates[0].vendor_2_description }}">
+                <input type="hidden" name="pair_key" value="{{ entry.top_candidates[0].pair_key }}">
+                <input type="hidden" name="proposed_group_key" value="{{ entry.top_candidates[0].proposed_group_key }}">
+                <input type="hidden" name="decision" value="match">
+                <button type="submit">Match this pair</button>
+              </form>
+              <form method="POST" style="display:inline-block; margin-right:8px;">
+                <input type="hidden" name="action" value="review_decision">
+                <input type="hidden" name="upload_id" value="{{ upload_id }}">
+                <input type="hidden" name="review_id" value="{{ entry.top_candidates[0].review_id }}">
+                <input type="hidden" name="vendor_1_description" value="{{ entry.source_description }}">
+                <input type="hidden" name="vendor_2_description" value="{{ entry.top_candidates[0].vendor_2_description }}">
+                <input type="hidden" name="pair_key" value="{{ entry.top_candidates[0].pair_key }}">
+                <input type="hidden" name="proposed_group_key" value="{{ entry.top_candidates[0].proposed_group_key }}">
+                <input type="hidden" name="decision" value="keep_separate">
+                <button type="submit">Keep separate</button>
+              </form>
+              <form method="POST" style="display:inline-block;">
+                <input type="hidden" name="action" value="review_decision">
+                <input type="hidden" name="upload_id" value="{{ upload_id }}">
+                <input type="hidden" name="review_id" value="{{ entry.top_candidates[0].review_id }}">
+                <input type="hidden" name="vendor_1_description" value="{{ entry.source_description }}">
+                <input type="hidden" name="decision" value="match">
+                <label>Choose a different match from top 5</label>
+                <select name="selected_vendor_2_description">
+                  {% for candidate in entry.top_candidates %}
+                    <option value="{{ candidate.vendor_2_description }}">{{ candidate.vendor_2_description }} (score {{ candidate.score }})</option>
+                  {% endfor %}
+                </select>
+                <select name="selected_proposed_group_key">
+                  {% for candidate in entry.top_candidates %}
+                    <option value="{{ candidate.proposed_group_key }}">{{ candidate.proposed_group_key }}</option>
+                  {% endfor %}
+                </select>
+                <button type="submit">Choose and Match</button>
+              </form>
+            {% else %}
+              <p class="muted">No candidate rows available.</p>
+            {% endif %}
+          </div>
+        {% endfor %}
+
+        <h3>No likely match found</h3>
+        {% for entry in match_review_buckets.no_likely_match_found %}
+          <div class="debug-card">
+            <p><strong>{{ entry.source_vendor }} item:</strong> {{ entry.source_description }}</p>
+            <p class="muted">No strong candidate was found automatically. You can still choose a manual match.</p>
+            <form method="POST">
+              <input type="hidden" name="action" value="review_decision">
+              <input type="hidden" name="upload_id" value="{{ upload_id }}">
+              <input type="hidden" name="review_id" value="{{ entry.source_vendor }}-{{ loop.index }}">
+              <input type="hidden" name="vendor_1_description" value="{{ entry.source_description }}">
+              <input type="hidden" name="decision" value="match">
+              <label>Manually choose a match</label>
+              <select name="selected_vendor_2_description">
+                {% if entry.source_vendor == "US Foods" %}
+                  {% for description in match_review_buckets.other_vendor_options.PFG %}
+                    <option value="{{ description }}">{{ description }}</option>
+                  {% endfor %}
+                {% else %}
+                  {% for description in match_review_buckets.other_vendor_options["US Foods"] %}
+                    <option value="{{ description }}">{{ description }}</option>
+                  {% endfor %}
+                {% endif %}
+              </select>
+              <input type="text" name="selected_proposed_group_key" placeholder="Group key (optional)" style="width:100%; margin-top:6px; margin-bottom:6px;">
+              <button type="submit">Save manual match</button>
+            </form>
+          </div>
+        {% endfor %}
+      </section>
+    {% endif %}
+
     <div class="table-wrap">
       <table aria-label="Vendor comparison table">
         <thead>

@@ -1,4 +1,5 @@
 import csv
+from difflib import SequenceMatcher
 import io
 import json
 import re
@@ -714,13 +715,21 @@ def parse_vendor_csv(
 # Combine rows from all vendors using token-overlap + similarity matching.
 def build_comparison_rows(
     rows: List[Dict[str, Optional[float]]], match_memory: Dict[str, Any]
-) -> Tuple[List[Dict[str, str]], List[Dict[str, str]], List[Dict[str, str]], Dict[str, Any]]:
+) -> Tuple[
+    List[Dict[str, str]],
+    List[Dict[str, str]],
+    List[Dict[str, str]],
+    Dict[str, Any],
+    Dict[str, Any],
+    Dict[str, int],
+]:
     combined: Dict[str, Dict[str, Any]] = {}
     match_debug_rows: List[Dict[str, str]] = []
     possible_matches: List[Dict[str, str]] = []
     review_stats: Dict[str, Any] = {}
     review_pair_keys: set[str] = set()
     review_debug_reasons: List[str] = []
+    parsed_entries: List[Dict[str, Any]] = []
 
     high_conf_threshold = 0.80
     medium_conf_threshold = 0.60
@@ -743,10 +752,6 @@ def build_comparison_rows(
         product_family = ""
         inferred_product_family = ""
 
-        # Priority:
-        # 1) manual override
-        # 2) alias/family rules
-        # 3) token-based fallback classifier
         if override_group_hit:
             product_family = override_group_hit
         else:
@@ -755,12 +760,10 @@ def build_comparison_rows(
                 inferred_product_family = infer_product_family_from_tokens(core_tokens)
                 product_family = inferred_product_family
 
-        # Decide whether to auto-group, suggest review, or keep separate.
         best_group_key = ""
         best_confidence = 0.0
         best_candidate_description = ""
         best_core_overlap = 0.0
-        best_attribute_overlap = 0.0
         best_size_overlap = 0.0
         best_candidate_alias_expanded = ""
         for group_key, group_data in combined.items():
@@ -779,7 +782,6 @@ def build_comparison_rows(
                 best_group_key = group_key
                 best_candidate_description = str(group_data["display_description"])
                 best_core_overlap = core_overlap
-                best_attribute_overlap = attribute_overlap
                 best_size_overlap = size_overlap
                 best_candidate_alias_expanded = str(group_data.get("normalized", ""))
 
@@ -847,7 +849,6 @@ def build_comparison_rows(
             if not should_review:
                 stats["left_unmatched"] += 1
         else:
-            # Low confidence (or rejected): keep separate.
             final_group_key = f"{product_family}::{normalized_description}"
             match_confidence = best_confidence if best_group_key else 1.0
             stats["left_unmatched"] += 1
@@ -865,11 +866,9 @@ def build_comparison_rows(
                 "pfg": None,
             }
         else:
-            # Keep the clearest human-readable label among matched rows.
             combined[final_group_key]["display_description"] = choose_clearer_description(
                 str(combined[final_group_key]["display_description"]), original_description
             )
-            # Grow token sets with tokens seen in matched descriptions.
             combined[final_group_key]["core_tokens"].update(core_tokens)
             combined[final_group_key]["attribute_tokens"].update(attribute_tokens)
             combined[final_group_key]["size_tokens"].update(size_tokens)
@@ -883,6 +882,7 @@ def build_comparison_rows(
         row["match_confidence"] = round(match_confidence, 2)
         row["final_group_key"] = final_group_key
         row["final_tokens"] = tokens
+
         match_debug_rows.append(
             {
                 "description": original_description,
@@ -899,10 +899,22 @@ def build_comparison_rows(
             }
         )
 
-        vendor = row.get("vendor")
-        price = row.get("price")
+        vendor = str(row.get("vendor") or "")
+        parsed_entries.append(
+            {
+                "vendor": vendor,
+                "description": original_description,
+                "normalized_description": normalized_description,
+                "alias_expanded_description": alias_expanded_description,
+                "product_family": product_family,
+                "core_tokens": core_tokens,
+                "attribute_tokens": attribute_tokens,
+                "size_tokens": size_tokens,
+                "final_group_key": final_group_key,
+            }
+        )
 
-        # If duplicate products exist in one vendor file, keep the lowest price for simplicity.
+        price = row.get("price")
         if vendor == "Sysco":
             current = combined[final_group_key]["sysco"]
             combined[final_group_key]["sysco"] = (
@@ -920,17 +932,14 @@ def build_comparison_rows(
             )
 
     output: List[Dict[str, str]] = []
-
     for _, prices in sorted(combined.items(), key=lambda item: item[1]["display_description"].lower()):
         vendor_prices = {
             "Sysco": prices["sysco"],
             "US Foods": prices["us_foods"],
             "PFG": prices["pfg"],
         }
-
         available = {vendor: value for vendor, value in vendor_prices.items() if value is not None}
         cheapest_vendor = min(available, key=available.get) if available else ""
-
         output.append(
             {
                 "description": str(prices["display_description"]),
@@ -949,7 +958,118 @@ def build_comparison_rows(
         "left_unmatched": stats["left_unmatched"],
     }
 
-    return output, match_debug_rows, possible_matches, review_stats
+    us_items = [entry for entry in parsed_entries if entry["vendor"] == "US Foods"]
+    pfg_items = [entry for entry in parsed_entries if entry["vendor"] == "PFG"]
+    total_pair_comparisons = 0
+
+    pair_scores: Dict[str, List[Dict[str, Any]]] = {}
+    for us_item in us_items:
+        key = f"US Foods::{us_item['description']}"
+        pair_scores[key] = []
+        for pfg_item in pfg_items:
+            pair_key = build_pair_key(str(us_item["description"]), str(pfg_item["description"]))
+            if pair_key in match_memory.get("rejected", set()):
+                continue
+            total_pair_comparisons += 1
+            family_match = 1.0 if us_item.get("product_family") and us_item.get("product_family") == pfg_item.get("product_family") else 0.0
+            core_overlap = token_overlap_score(list(us_item["core_tokens"]), list(pfg_item["core_tokens"]))
+            alias_overlap = token_overlap_score(
+                build_meaningful_tokens(str(us_item["alias_expanded_description"])),
+                build_meaningful_tokens(str(pfg_item["alias_expanded_description"])),
+            )
+            description_similarity = SequenceMatcher(
+                None,
+                str(us_item["normalized_description"]),
+                str(pfg_item["normalized_description"]),
+            ).ratio()
+            size_overlap = token_overlap_score(list(us_item["size_tokens"]), list(pfg_item["size_tokens"]))
+            score = (
+                (0.35 * family_match)
+                + (0.25 * core_overlap)
+                + (0.20 * alias_overlap)
+                + (0.15 * description_similarity)
+                + (0.05 * size_overlap)
+            )
+            pair_scores[key].append(
+                {
+                    "review_id": str(uuid.uuid4()),
+                    "vendor_1_description": str(us_item["description"]),
+                    "vendor_2_description": str(pfg_item["description"]),
+                    "pair_key": pair_key,
+                    "proposed_group_key": str(pfg_item["final_group_key"]),
+                    "score": round(score, 2),
+                    "product_family_match": "yes" if family_match else "no",
+                    "shared_core_tokens": ", ".join(sorted(set(us_item["core_tokens"]) & set(pfg_item["core_tokens"]))),
+                    "alias_overlap": round(alias_overlap, 2),
+                    "description_similarity": round(description_similarity, 2),
+                    "size_overlap": round(size_overlap, 2),
+                }
+            )
+        pair_scores[key].sort(key=lambda item: item["score"], reverse=True)
+
+    reverse_scores: Dict[str, List[Dict[str, Any]]] = {}
+    for pfg_item in pfg_items:
+        key = f"PFG::{pfg_item['description']}"
+        reverse_scores[key] = []
+        for us_item in us_items:
+            pair_key = build_pair_key(str(us_item["description"]), str(pfg_item["description"]))
+            if pair_key in match_memory.get("rejected", set()):
+                continue
+            pool_key = f"US Foods::{us_item['description']}"
+            candidate = next((item for item in pair_scores.get(pool_key, []) if item["pair_key"] == pair_key), None)
+            if candidate:
+                reverse_scores[key].append(candidate)
+        reverse_scores[key].sort(key=lambda item: item["score"], reverse=True)
+
+    def has_confirmed_candidate(candidates: List[Dict[str, Any]]) -> bool:
+        for candidate in candidates[:5]:
+            if match_memory.get("confirmed", {}).get(candidate["pair_key"]):
+                return True
+        return False
+
+    match_review_buckets: Dict[str, Any] = {
+        "high_confidence_auto_matches": [],
+        "needs_review": [],
+        "no_likely_match_found": [],
+        "other_vendor_options": {
+            "US Foods": [entry["description"] for entry in us_items],
+            "PFG": [entry["description"] for entry in pfg_items],
+        },
+    }
+
+    def add_bucket_entry(source_vendor: str, source_description: str, candidates: List[Dict[str, Any]]) -> None:
+        top_five = candidates[:5]
+        top_score = top_five[0]["score"] if top_five else 0.0
+        entry = {
+            "source_vendor": source_vendor,
+            "source_description": source_description,
+            "top_candidates": top_five,
+        }
+        if has_confirmed_candidate(top_five) or top_score >= 0.85:
+            match_review_buckets["high_confidence_auto_matches"].append(entry)
+        elif top_score >= 0.45:
+            match_review_buckets["needs_review"].append(entry)
+        else:
+            match_review_buckets["no_likely_match_found"].append(entry)
+
+    for us_item in us_items:
+        source_key = f"US Foods::{us_item['description']}"
+        add_bucket_entry("US Foods", str(us_item["description"]), pair_scores.get(source_key, []))
+
+    for pfg_item in pfg_items:
+        source_key = f"PFG::{pfg_item['description']}"
+        add_bucket_entry("PFG", str(pfg_item["description"]), reverse_scores.get(source_key, []))
+
+    match_matrix_stats = {
+        "total_us_foods_items": len(us_items),
+        "total_pfg_items": len(pfg_items),
+        "total_pair_comparisons_created": total_pair_comparisons,
+        "high_confidence_matches": len(match_review_buckets["high_confidence_auto_matches"]),
+        "needs_review": len(match_review_buckets["needs_review"]),
+        "no_match_found": len(match_review_buckets["no_likely_match_found"]),
+    }
+
+    return output, match_debug_rows, possible_matches, review_stats, match_review_buckets, match_matrix_stats
 
 
 @app.route("/", methods=["GET", "POST"])
@@ -961,6 +1081,8 @@ def index():
     errors: List[str] = []
     review_success_messages: List[str] = []
     review_error_messages: List[str] = []
+    match_review_buckets: Dict[str, Any] = {}
+    match_matrix_stats: Dict[str, int] = {}
     fatal_error: Optional[Dict[str, str]] = None
     debug_details: List[Dict[str, Any]] = []
     mapping_options: Dict[str, Any] = {}
@@ -1080,6 +1202,12 @@ def index():
                     vendor_1_description = request.form.get("vendor_1_description", "")
                     vendor_2_description = request.form.get("vendor_2_description", "")
                     proposed_group_key = request.form.get("proposed_group_key", "")
+                    if not vendor_2_description:
+                        vendor_2_description = request.form.get("selected_vendor_2_description", "")
+                    if not proposed_group_key:
+                        proposed_group_key = request.form.get("selected_proposed_group_key", "")
+                    if not proposed_group_key and vendor_2_description:
+                        proposed_group_key = clean_description_for_match(vendor_2_description)
                     review_id = request.form.get("review_id", "")
                     pair_key = request.form.get("pair_key", "") or build_pair_key(vendor_1_description, vendor_2_description)
                     debug_prefix = (
@@ -1140,7 +1268,7 @@ def index():
             if all_vendor_rows and not show_mapping_form:
                 failed_step = "review candidate generation"
                 try:
-                    comparison_rows, match_debug_rows, possible_matches, review_stats = build_comparison_rows(
+                    comparison_rows, match_debug_rows, possible_matches, review_stats, match_review_buckets, match_matrix_stats = build_comparison_rows(
                         all_vendor_rows, match_memory
                     )
                 except Exception as exc:
@@ -1151,6 +1279,8 @@ def index():
                     comparison_rows = build_basic_comparison_rows(all_vendor_rows)
                     possible_matches = []
                     match_debug_rows = []
+                    match_review_buckets = {}
+                    match_matrix_stats = {}
 
                 debug_counters["rows_grouped"] = len(comparison_rows)
                 debug_counters["review_candidates_generated"] = len(possible_matches)
@@ -1183,6 +1313,8 @@ def index():
         review_error_messages=review_error_messages,
         fatal_error=fatal_error,
         debug_counters=debug_counters,
+        match_review_buckets=match_review_buckets,
+        match_matrix_stats=match_matrix_stats,
     )
 
 
@@ -1208,6 +1340,8 @@ def handle_internal_server_error(error):
             "failed_step": "global_500_handler",
         },
         debug_counters={},
+        match_review_buckets={},
+        match_matrix_stats={},
     ), 500
 
 

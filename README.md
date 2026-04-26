@@ -82,6 +82,21 @@ You upload CSV files from Sysco, US Foods, and PFG, and the app builds one compa
   - additional rule-based candidates are also sent to review (same family, strong core overlap, size/pack overlap with shared core, shorthand vs long wording)
   - low-confidence matches stay separate
   You can click **Match** or **Keep Separate**.
+- It now includes a **full US Foods ↔ PFG pairwise Match Review matrix**:
+  - every US Foods row is compared against every PFG row (except rejected pairs in current session memory)
+  - each pair gets a rule-based score using:
+    - product_family match
+    - shared core tokens
+    - alias/synonym overlap
+    - normalized description similarity
+    - size/pack similarity as supporting signal only
+  - each item shows its top 5 candidates and is placed into one bucket:
+    - High confidence auto-matches
+    - Needs review
+    - No likely match found
+  - no item is silently dropped from review
+  - in Needs review, you can choose Match this pair, Keep separate, or choose a different match from top 5
+  - in No likely match found, you can still manually choose a match from the full opposite-vendor list
 - Review memory is saved locally in `match_memory.json`:
   - confirmed pairs are remembered and auto-grouped next time
   - rejected pairs are remembered and not suggested again
