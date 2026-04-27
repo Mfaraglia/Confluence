@@ -1261,6 +1261,80 @@ def index():
                     debug_counters["rows_parsed_per_vendor"][vendor_name] += len(rows)
                     errors.extend(file_errors)
                     debug_details.append(debug_info)
+            elif action == "submit_all_review_decisions":
+                failed_step = "review save"
+                confirmed_count = 0
+                separated_count = 0
+                skipped_count = 0
+                try:
+                    total_cards = int(request.form.get("total_review_cards", "0") or "0")
+                    for i in range(total_cards):
+                        decision = request.form.get(f"decision_{i}", "skip")
+                        vendor_1_description = request.form.get(f"vendor_1_description_{i}", "")
+                        vendor_2_description = request.form.get(f"vendor_2_description_{i}", "")
+                        proposed_group_key = request.form.get(f"proposed_group_key_{i}", "")
+                        selected_vendor_2_description = request.form.get(f"selected_vendor_2_description_{i}", "")
+                        selected_proposed_group_key = request.form.get(f"selected_proposed_group_key_{i}", "")
+
+                        if selected_vendor_2_description:
+                            vendor_2_description = selected_vendor_2_description
+                        if selected_proposed_group_key:
+                            proposed_group_key = selected_proposed_group_key
+                        if not proposed_group_key and vendor_2_description:
+                            proposed_group_key = clean_description_for_match(vendor_2_description)
+
+                        pair_key = request.form.get(f"pair_key_{i}", "") or build_pair_key(
+                            vendor_1_description, vendor_2_description
+                        )
+
+                        if decision == "match" and pair_key:
+                            match_memory["confirmed"][pair_key] = proposed_group_key
+                            match_memory["rejected"].discard(pair_key)
+                            confirmed_count += 1
+                        elif decision == "keep_separate" and pair_key:
+                            match_memory["rejected"].add(pair_key)
+                            match_memory["confirmed"].pop(pair_key, None)
+                            separated_count += 1
+                        else:
+                            skipped_count += 1
+
+                    storage_location = "server_memory_fallback"
+                    save_status = "succeeded"
+                    try:
+                        save_match_memory(match_memory)
+                        if ENABLE_FILE_PERSISTENCE:
+                            storage_location = "local_file"
+                    except Exception:
+                        storage_location = "server_memory_fallback"
+
+                    SESSION_REVIEW_MEMORY[session_id] = {
+                        "confirmed": dict(match_memory.get("confirmed", {})),
+                        "rejected": set(match_memory.get("rejected", set())),
+                    }
+                    session["match_memory_fallback"] = {
+                        "confirmed": match_memory.get("confirmed", {}),
+                        "rejected": sorted(list(match_memory.get("rejected", set()))),
+                    }
+                    review_success_messages.append(
+                        f"Submitted all review decisions: matches confirmed={confirmed_count}, "
+                        f"kept separate={separated_count}, skipped={skipped_count}, "
+                        f"save_status={save_status}, stored_in={storage_location}"
+                    )
+                except Exception as exc:
+                    review_error_messages.append(f"Bulk review submission error: {exc}")
+
+                if not upload_id:
+                    upload_id = session.get("last_upload_id", "")
+                cached_vendor_files = UPLOAD_CACHE.get(upload_id, {})
+                for vendor_name, _, _ in vendor_keys:
+                    file_text = cached_vendor_files.get(vendor_name, "")
+                    if not file_text:
+                        continue
+                    rows, file_errors, debug_info = parse_vendor_text(vendor_name, file_text, None)
+                    all_vendor_rows.extend(rows)
+                    debug_counters["rows_parsed_per_vendor"][vendor_name] += len(rows)
+                    errors.extend(file_errors)
+                    debug_details.append(debug_info)
 
             if not all_vendor_rows and not errors and action == "upload":
                 errors.append("Please upload at least one CSV file.")

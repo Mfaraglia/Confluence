@@ -195,6 +195,17 @@
       margin: 8px 0 0;
       padding-left: 18px;
     }
+
+    .sticky-review-toolbar {
+      position: sticky;
+      top: 8px;
+      z-index: 10;
+      background: #eef4ff;
+      border: 1px solid #c9d7ff;
+      border-radius: 8px;
+      padding: 10px;
+      margin-bottom: 10px;
+    }
   </style>
 </head>
 <body>
@@ -434,28 +445,7 @@
             <p><strong>Vendor 2 description:</strong> {{ candidate.vendor_2_description }}</p>
             <p><strong>Suggested reason(s):</strong> {{ candidate.reasons }}</p>
             <p><strong>Confidence:</strong> {{ candidate.confidence }}</p>
-            <form method="POST" style="display:inline-block; margin-right:8px;">
-              <input type="hidden" name="action" value="review_decision">
-              <input type="hidden" name="upload_id" value="{{ upload_id }}">
-              <input type="hidden" name="review_id" value="{{ candidate.review_id }}">
-              <input type="hidden" name="vendor_1_description" value="{{ candidate.vendor_1_description }}">
-              <input type="hidden" name="vendor_2_description" value="{{ candidate.vendor_2_description }}">
-              <input type="hidden" name="pair_key" value="{{ candidate.pair_key }}">
-              <input type="hidden" name="proposed_group_key" value="{{ candidate.proposed_group_key }}">
-              <input type="hidden" name="decision" value="match">
-              <button type="submit">Match</button>
-            </form>
-            <form method="POST" style="display:inline-block;">
-              <input type="hidden" name="action" value="review_decision">
-              <input type="hidden" name="upload_id" value="{{ upload_id }}">
-              <input type="hidden" name="review_id" value="{{ candidate.review_id }}">
-              <input type="hidden" name="vendor_1_description" value="{{ candidate.vendor_1_description }}">
-              <input type="hidden" name="vendor_2_description" value="{{ candidate.vendor_2_description }}">
-              <input type="hidden" name="pair_key" value="{{ candidate.pair_key }}">
-              <input type="hidden" name="proposed_group_key" value="{{ candidate.proposed_group_key }}">
-              <input type="hidden" name="decision" value="keep_separate">
-              <button type="submit">Keep Separate</button>
-            </form>
+            <p class="muted">Use the batch Match Review section below to submit decisions all at once.</p>
           </div>
         {% endfor %}
       </section>
@@ -510,96 +500,84 @@
           </div>
         {% endfor %}
 
-        <h3>Needs review</h3>
-        {% for entry in match_review_buckets.needs_review %}
-          <div class="debug-card">
-            <p><strong>{{ entry.source_vendor }} item:</strong> {{ entry.source_description }}</p>
-            {% if entry.top_candidates %}
-              <ul class="debug-list">
-                {% for candidate in entry.top_candidates %}
-                  <li>
-                    {{ candidate.vendor_2_description }} | score={{ candidate.score }} | family_match={{ candidate.product_family_match }} |
-                    shared_core="{{ candidate.shared_core_tokens if candidate.shared_core_tokens else 'none' }}" |
-                    alias_overlap={{ candidate.alias_overlap }} | description_similarity={{ candidate.description_similarity }} | size_overlap={{ candidate.size_overlap }}
-                  </li>
-                {% endfor %}
-              </ul>
+        {% set review_items = match_review_buckets.needs_review + match_review_buckets.no_likely_match_found %}
+        <h3>Needs review + no likely match (batch decisions)</h3>
+        {% if review_items %}
+          <form method="POST">
+            <input type="hidden" name="action" value="submit_all_review_decisions">
+            <input type="hidden" name="upload_id" value="{{ upload_id }}">
+            <input type="hidden" name="total_review_cards" value="{{ review_items|length }}">
 
-              <form method="POST" style="display:inline-block; margin-right:8px;">
-                <input type="hidden" name="action" value="review_decision">
-                <input type="hidden" name="upload_id" value="{{ upload_id }}">
-                <input type="hidden" name="review_id" value="{{ entry.top_candidates[0].review_id }}">
-                <input type="hidden" name="vendor_1_description" value="{{ entry.source_description }}">
-                <input type="hidden" name="vendor_2_description" value="{{ entry.top_candidates[0].vendor_2_description }}">
-                <input type="hidden" name="pair_key" value="{{ entry.top_candidates[0].pair_key }}">
-                <input type="hidden" name="proposed_group_key" value="{{ entry.top_candidates[0].proposed_group_key }}">
-                <input type="hidden" name="decision" value="match">
-                <button type="submit">Match this pair</button>
-              </form>
-              <form method="POST" style="display:inline-block; margin-right:8px;">
-                <input type="hidden" name="action" value="review_decision">
-                <input type="hidden" name="upload_id" value="{{ upload_id }}">
-                <input type="hidden" name="review_id" value="{{ entry.top_candidates[0].review_id }}">
-                <input type="hidden" name="vendor_1_description" value="{{ entry.source_description }}">
-                <input type="hidden" name="vendor_2_description" value="{{ entry.top_candidates[0].vendor_2_description }}">
-                <input type="hidden" name="pair_key" value="{{ entry.top_candidates[0].pair_key }}">
-                <input type="hidden" name="proposed_group_key" value="{{ entry.top_candidates[0].proposed_group_key }}">
-                <input type="hidden" name="decision" value="keep_separate">
-                <button type="submit">Keep separate</button>
-              </form>
-              <form method="POST" style="display:inline-block;">
-                <input type="hidden" name="action" value="review_decision">
-                <input type="hidden" name="upload_id" value="{{ upload_id }}">
-                <input type="hidden" name="review_id" value="{{ entry.top_candidates[0].review_id }}">
-                <input type="hidden" name="vendor_1_description" value="{{ entry.source_description }}">
-                <input type="hidden" name="decision" value="match">
-                <label>Choose a different match from top 5</label>
-                <select name="selected_vendor_2_description">
-                  {% for candidate in entry.top_candidates %}
-                    <option value="{{ candidate.vendor_2_description }}">{{ candidate.vendor_2_description }} (score {{ candidate.score }})</option>
-                  {% endfor %}
-                </select>
-                <select name="selected_proposed_group_key">
-                  {% for candidate in entry.top_candidates %}
-                    <option value="{{ candidate.proposed_group_key }}">{{ candidate.proposed_group_key }}</option>
-                  {% endfor %}
-                </select>
-                <button type="submit">Choose and Match</button>
-              </form>
-            {% else %}
-              <p class="muted">No candidate rows available.</p>
-            {% endif %}
-          </div>
-        {% endfor %}
+            <div class="sticky-review-toolbar">
+              <strong>Review Toolbar</strong><br>
+              <span>Selected Match: <span id="match-count">0</span></span> |
+              <span>Selected Keep Separate: <span id="keep-separate-count">0</span></span> |
+              <span>Selected Skip: <span id="skip-count">0</span></span>
+              <div style="margin-top:8px;">
+                <button type="submit">Submit All Review Decisions</button>
+              </div>
+            </div>
 
-        <h3>No likely match found</h3>
-        {% for entry in match_review_buckets.no_likely_match_found %}
-          <div class="debug-card">
-            <p><strong>{{ entry.source_vendor }} item:</strong> {{ entry.source_description }}</p>
-            <p class="muted">No strong candidate was found automatically. You can still choose a manual match.</p>
-            <form method="POST">
-              <input type="hidden" name="action" value="review_decision">
-              <input type="hidden" name="upload_id" value="{{ upload_id }}">
-              <input type="hidden" name="review_id" value="{{ entry.source_vendor }}-{{ loop.index }}">
-              <input type="hidden" name="vendor_1_description" value="{{ entry.source_description }}">
-              <input type="hidden" name="decision" value="match">
-              <label>Manually choose a match</label>
-              <select name="selected_vendor_2_description">
-                {% if entry.source_vendor == "US Foods" %}
-                  {% for description in match_review_buckets.other_vendor_options.PFG %}
-                    <option value="{{ description }}">{{ description }}</option>
-                  {% endfor %}
+            {% for entry in review_items %}
+              <div class="debug-card">
+                <p><strong>{{ entry.source_vendor }} item:</strong> {{ entry.source_description }}</p>
+                {% if entry.top_candidates %}
+                  <ul class="debug-list">
+                    {% for candidate in entry.top_candidates %}
+                      <li>
+                        {{ candidate.vendor_2_description }} | score={{ candidate.score }} | family_match={{ candidate.product_family_match }} |
+                        shared_core="{{ candidate.shared_core_tokens if candidate.shared_core_tokens else 'none' }}" |
+                        alias_overlap={{ candidate.alias_overlap }} | description_similarity={{ candidate.description_similarity }} | size_overlap={{ candidate.size_overlap }}
+                      </li>
+                    {% endfor %}
+                  </ul>
                 {% else %}
-                  {% for description in match_review_buckets.other_vendor_options["US Foods"] %}
-                    <option value="{{ description }}">{{ description }}</option>
-                  {% endfor %}
+                  <p class="muted">No top candidates found. Use manual partner selection below.</p>
                 {% endif %}
-              </select>
-              <input type="text" name="selected_proposed_group_key" placeholder="Group key (optional)" style="width:100%; margin-top:6px; margin-bottom:6px;">
-              <button type="submit">Save manual match</button>
-            </form>
-          </div>
-        {% endfor %}
+
+                <input type="hidden" name="vendor_1_description_{{ loop.index0 }}" value="{{ entry.source_description }}">
+                <input type="hidden" name="pair_key_{{ loop.index0 }}" value="{{ entry.top_candidates[0].pair_key if entry.top_candidates else '' }}">
+                <input type="hidden" name="vendor_2_description_{{ loop.index0 }}" value="{{ entry.top_candidates[0].vendor_2_description if entry.top_candidates else '' }}">
+                <input type="hidden" name="proposed_group_key_{{ loop.index0 }}" value="{{ entry.top_candidates[0].proposed_group_key if entry.top_candidates else '' }}">
+
+                <p><strong>Decision</strong></p>
+                <label><input type="radio" name="decision_{{ loop.index0 }}" value="match"> Match</label>
+                <label><input type="radio" name="decision_{{ loop.index0 }}" value="keep_separate"> Keep Separate</label>
+                <label><input type="radio" name="decision_{{ loop.index0 }}" value="skip" checked> Skip for now</label>
+
+                <p style="margin-top:8px;"><strong>Optional: choose a different match target</strong></p>
+                <select name="selected_vendor_2_description_{{ loop.index0 }}">
+                  <option value="">-- Keep default top candidate --</option>
+                  {% if entry.source_vendor == "US Foods" %}
+                    {% for candidate in entry.top_candidates %}
+                      <option value="{{ candidate.vendor_2_description }}">{{ candidate.vendor_2_description }} (top list)</option>
+                    {% endfor %}
+                    {% for description in match_review_buckets.other_vendor_options.PFG %}
+                      <option value="{{ description }}">{{ description }} (full PFG list)</option>
+                    {% endfor %}
+                  {% else %}
+                    {% for candidate in entry.top_candidates %}
+                      <option value="{{ candidate.vendor_2_description }}">{{ candidate.vendor_2_description }} (top list)</option>
+                    {% endfor %}
+                    {% for description in match_review_buckets.other_vendor_options["US Foods"] %}
+                      <option value="{{ description }}">{{ description }} (full US Foods list)</option>
+                    {% endfor %}
+                  {% endif %}
+                </select>
+                <input type="text" name="selected_proposed_group_key_{{ loop.index0 }}" placeholder="Optional group key override" style="width:100%; margin-top:6px;">
+              </div>
+            {% endfor %}
+
+            <div class="sticky-review-toolbar">
+              <strong>Ready to submit all decisions?</strong>
+              <div style="margin-top:8px;">
+                <button type="submit">Submit All Review Decisions</button>
+              </div>
+            </div>
+          </form>
+        {% else %}
+          <p class="muted">No items currently require batch review.</p>
+        {% endif %}
       </section>
     {% endif %}
 
@@ -636,5 +614,35 @@
 
     <p class="muted">Note: This version matches by a cleaned description (lowercase + spaces normalized + punctuation removed).</p>
   </main>
+  <script>
+    (function () {
+      const decisionInputs = document.querySelectorAll('input[type="radio"][name^="decision_"]');
+      if (!decisionInputs.length) return;
+
+      function updateCounts() {
+        let match = 0;
+        let keepSeparate = 0;
+        let skip = 0;
+        const groups = {};
+        decisionInputs.forEach((input) => {
+          if (input.checked) groups[input.name] = input.value;
+        });
+        Object.values(groups).forEach((value) => {
+          if (value === 'match') match += 1;
+          else if (value === 'keep_separate') keepSeparate += 1;
+          else skip += 1;
+        });
+        const matchEl = document.getElementById('match-count');
+        const keepEl = document.getElementById('keep-separate-count');
+        const skipEl = document.getElementById('skip-count');
+        if (matchEl) matchEl.textContent = String(match);
+        if (keepEl) keepEl.textContent = String(keepSeparate);
+        if (skipEl) skipEl.textContent = String(skip);
+      }
+
+      decisionInputs.forEach((input) => input.addEventListener('change', updateCounts));
+      updateCounts();
+    })();
+  </script>
 </body>
 </html>

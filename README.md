@@ -97,6 +97,10 @@ You upload CSV files from Sysco, US Foods, and PFG, and the app builds one compa
   - no item is silently dropped from review
   - in Needs review, you can choose Match this pair, Keep separate, or choose a different match from top 5
   - in No likely match found, you can still manually choose a match from the full opposite-vendor list
+  - review decisions are now **batch-submitted**:
+    - each card has Match / Keep Separate / Skip for now choices
+    - one **Submit All Review Decisions** button appears at the top and bottom
+    - the page applies all decisions at once and shows counts for confirmed / kept separate / skipped
 - Review memory is saved locally in `match_memory.json`:
   - confirmed pairs are remembered and auto-grouped next time
   - rejected pairs are remembered and not suggested again
