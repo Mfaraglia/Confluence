@@ -89,6 +89,57 @@ def build_pair_key(left: str, right: str) -> str:
     return "||".join(sorted([a, b]))
 
 
+def build_forced_group_assignments(match_memory: Dict[str, Any]) -> Tuple[Dict[str, str], Dict[str, List[str]]]:
+    # Confirmed review pairs are treated as the highest-priority grouping rule.
+    parent: Dict[str, str] = {}
+
+    def find(x: str) -> str:
+        parent.setdefault(x, x)
+        if parent[x] != x:
+            parent[x] = find(parent[x])
+        return parent[x]
+
+    def union(a: str, b: str) -> None:
+        root_a = find(a)
+        root_b = find(b)
+        if root_a != root_b:
+            parent[root_b] = root_a
+
+    confirmed_pairs = match_memory.get("confirmed", {})
+    proposed_by_pair: Dict[str, str] = {}
+    for pair_key, proposed in confirmed_pairs.items():
+        parts = pair_key.split("||")
+        if len(parts) != 2:
+            continue
+        left = parts[0].strip()
+        right = parts[1].strip()
+        if not left or not right:
+            continue
+        union(left, right)
+        proposed_by_pair[pair_key] = str(proposed or "").strip()
+
+    components: Dict[str, List[str]] = {}
+    for node in list(parent.keys()):
+        root = find(node)
+        components.setdefault(root, []).append(node)
+
+    description_to_group: Dict[str, str] = {}
+    group_to_descriptions: Dict[str, List[str]] = {}
+    for root, descriptions in components.items():
+        normalized_descriptions = sorted(set(descriptions))
+        suggested_group_key = ""
+        for pair_key, proposed in proposed_by_pair.items():
+            if proposed and any(desc in pair_key for desc in normalized_descriptions):
+                suggested_group_key = proposed
+                break
+        forced_group_key = suggested_group_key or f"forced::{root}"
+        group_to_descriptions[forced_group_key] = normalized_descriptions
+        for description in normalized_descriptions:
+            description_to_group[description] = forced_group_key
+
+    return description_to_group, group_to_descriptions
+
+
 def get_session_id() -> str:
     if "session_id" not in session:
         session["session_id"] = str(uuid.uuid4())
@@ -730,6 +781,7 @@ def build_comparison_rows(
     review_pair_keys: set[str] = set()
     review_debug_reasons: List[str] = []
     parsed_entries: List[Dict[str, Any]] = []
+    forced_description_to_group, forced_groups_debug = build_forced_group_assignments(match_memory)
 
     high_conf_threshold = 0.80
     medium_conf_threshold = 0.60
@@ -751,6 +803,7 @@ def build_comparison_rows(
         override_group_hit = find_manual_override_group(alias_expanded_description)
         product_family = ""
         inferred_product_family = ""
+        forced_group_key = forced_description_to_group.get(clean_description_for_match(original_description), "")
 
         if override_group_hit:
             product_family = override_group_hit
@@ -794,7 +847,11 @@ def build_comparison_rows(
             pair_key = ""
             is_rejected = False
 
-        if confirmed_group:
+        if forced_group_key:
+            final_group_key = forced_group_key
+            match_confidence = 1.0
+            stats["auto_grouped"] += 1
+        elif confirmed_group:
             final_group_key = confirmed_group
             match_confidence = 1.0
             stats["auto_grouped"] += 1
@@ -956,6 +1013,8 @@ def build_comparison_rows(
         "auto_grouped": stats["auto_grouped"],
         "sent_to_review": stats["sent_to_review"],
         "left_unmatched": stats["left_unmatched"],
+        "forced_group_keys_created": len(forced_groups_debug),
+        "forced_group_assignments": forced_groups_debug,
     }
 
     us_items = [entry for entry in parsed_entries if entry["vendor"] == "US Foods"]
@@ -1081,6 +1140,7 @@ def index():
     errors: List[str] = []
     review_success_messages: List[str] = []
     review_error_messages: List[str] = []
+    review_batch_debug: Dict[str, Any] = {}
     match_review_buckets: Dict[str, Any] = {}
     match_matrix_stats: Dict[str, int] = {}
     fatal_error: Optional[Dict[str, str]] = None
@@ -1266,6 +1326,7 @@ def index():
                 confirmed_count = 0
                 separated_count = 0
                 skipped_count = 0
+                decision_error_count = 0
                 try:
                     total_cards = int(request.form.get("total_review_cards", "0") or "0")
                     for i in range(total_cards):
@@ -1283,14 +1344,20 @@ def index():
                         if not proposed_group_key and vendor_2_description:
                             proposed_group_key = clean_description_for_match(vendor_2_description)
 
-                        pair_key = request.form.get(f"pair_key_{i}", "") or build_pair_key(
-                            vendor_1_description, vendor_2_description
-                        )
+                        pair_key = request.form.get(f"pair_key_{i}", "")
+                        if not pair_key and vendor_1_description and vendor_2_description:
+                            pair_key = build_pair_key(vendor_1_description, vendor_2_description)
 
                         if decision == "match" and pair_key:
                             match_memory["confirmed"][pair_key] = proposed_group_key
                             match_memory["rejected"].discard(pair_key)
                             confirmed_count += 1
+                        elif decision == "match":
+                            decision_error_count += 1
+                            review_error_messages.append(
+                                f"Card {i + 1}: Please choose a valid match target before selecting Match."
+                            )
+                            skipped_count += 1
                         elif decision == "keep_separate" and pair_key:
                             match_memory["rejected"].add(pair_key)
                             match_memory["confirmed"].pop(pair_key, None)
@@ -1315,11 +1382,34 @@ def index():
                         "confirmed": match_memory.get("confirmed", {}),
                         "rejected": sorted(list(match_memory.get("rejected", set()))),
                     }
+                    _, forced_group_debug = build_forced_group_assignments(match_memory)
                     review_success_messages.append(
                         f"Submitted all review decisions: matches confirmed={confirmed_count}, "
                         f"kept separate={separated_count}, skipped={skipped_count}, "
-                        f"save_status={save_status}, stored_in={storage_location}"
+                        f"save_status={save_status}, stored_in={storage_location}, "
+                        f"errors={decision_error_count}, forced_group_keys_created={len(forced_group_debug)}"
                     )
+                    review_success_messages.append(
+                        f"{confirmed_count} confirmed matches applied to comparison table."
+                    )
+                    review_success_messages.append(
+                        "Forced group assignments: "
+                        + "; ".join(
+                            f"{group_key}: {', '.join(descriptions)}"
+                            for group_key, descriptions in forced_group_debug.items()
+                        )
+                        if forced_group_debug
+                        else "Forced group assignments: none"
+                    )
+                    review_batch_debug = {
+                        "total_review_decisions_submitted": total_cards,
+                        "matches_confirmed": confirmed_count,
+                        "matches_rejected": separated_count,
+                        "skipped": skipped_count,
+                        "decision_errors": decision_error_count,
+                        "confirmed_forced_group_keys_created": len(forced_group_debug),
+                        "forced_group_assignments": forced_group_debug,
+                    }
                 except Exception as exc:
                     review_error_messages.append(f"Bulk review submission error: {exc}")
 
@@ -1389,6 +1479,7 @@ def index():
         debug_counters=debug_counters,
         match_review_buckets=match_review_buckets,
         match_matrix_stats=match_matrix_stats,
+        review_batch_debug=review_batch_debug,
     )
 
 
@@ -1416,6 +1507,7 @@ def handle_internal_server_error(error):
         debug_counters={},
         match_review_buckets={},
         match_matrix_stats={},
+        review_batch_debug={},
     ), 500
 
 

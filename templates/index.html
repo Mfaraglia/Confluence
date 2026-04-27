@@ -340,6 +340,26 @@
       </div>
     {% endif %}
 
+    {% if review_batch_debug %}
+      <section class="debug" aria-label="Batch review submission debug">
+        <h2>Batch Review Submission Debug</h2>
+        <p><strong>Total review decisions submitted:</strong> {{ review_batch_debug.total_review_decisions_submitted }}</p>
+        <p><strong>Matches confirmed:</strong> {{ review_batch_debug.matches_confirmed }}</p>
+        <p><strong>Matches rejected:</strong> {{ review_batch_debug.matches_rejected }}</p>
+        <p><strong>Skipped:</strong> {{ review_batch_debug.skipped }}</p>
+        <p><strong>Decision errors:</strong> {{ review_batch_debug.decision_errors }}</p>
+        <p><strong>Confirmed forced_group_keys created:</strong> {{ review_batch_debug.confirmed_forced_group_keys_created }}</p>
+        {% if review_batch_debug.forced_group_assignments %}
+          <p><strong>Product descriptions per forced_group_key:</strong></p>
+          <ul class="debug-list">
+            {% for key, descriptions in review_batch_debug.forced_group_assignments.items() %}
+              <li><strong>{{ key }}</strong>: {{ descriptions|join(", ") }}</li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+      </section>
+    {% endif %}
+
     {% if fatal_error %}
       <div class="errors" role="alert">
         <strong>Readable Error Details</strong>
