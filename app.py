@@ -1157,6 +1157,8 @@ def index():
         "rows_grouped": 0,
         "review_candidates_generated": 0,
         "confirmed_matches_loaded": 0,
+        "forced_matches_applied": 0,
+        "review_items_remaining": 0,
     }
 
     if request.method == "POST":
@@ -1447,6 +1449,10 @@ def index():
 
                 debug_counters["rows_grouped"] = len(comparison_rows)
                 debug_counters["review_candidates_generated"] = len(possible_matches)
+                debug_counters["forced_matches_applied"] = int(review_stats.get("forced_group_keys_created", 0))
+                debug_counters["review_items_remaining"] = int(match_matrix_stats.get("needs_review", 0)) + int(
+                    match_matrix_stats.get("no_match_found", 0)
+                )
                 review_stats["debug_counters"] = debug_counters
             elif show_mapping_form and not errors:
                 errors.append("Please choose manual column mappings, then click Apply Column Mapping.")
