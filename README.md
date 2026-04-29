@@ -102,6 +102,16 @@ You upload CSV files from Sysco, US Foods, and PFG, and the app builds one compa
     - one **Submit All Review Decisions** button appears at the top and bottom
     - the page applies all decisions at once and shows counts for confirmed / kept separate / skipped
   - confirmed review matches now create **forced group keys** that are applied before normal matching logic so confirmed pairs are guaranteed to group in the final comparison table
+- It now calculates **normalized unit prices** (simple rule-based parsing):
+  - parses common pack formats like `24 ct`, `48 count`, `40 lb`, `6/5 lb`, `4/1 gal`, `12/16 oz`, `15 dozen`, `1 each`
+  - computes:
+    - case_price
+    - normalized_unit_quantity
+    - normalized_unit_type
+    - unit_price
+  - shows new columns for vendor unit prices plus **Cheapest by Case** and **Cheapest by Unit**
+  - if unit price cannot be calculated, it shows `Needs review`
+  - if unit types are incompatible across vendors (example: `lb` vs `each`), it shows `Unit mismatch — review needed.`
 - Review memory is saved locally in `match_memory.json`:
   - confirmed pairs are remembered and auto-grouped next time
   - rejected pairs are remembered and not suggested again

@@ -144,6 +144,12 @@
       font-weight: 700;
     }
 
+    .cheapest-unit {
+      background: #fff6d6 !important;
+      color: #7a4b00;
+      font-weight: 700;
+    }
+
     .muted {
       color: var(--muted);
       font-style: italic;
@@ -417,6 +423,10 @@
                     pack_size="{{ sample.pack_size }}",
                     raw_price="{{ sample.raw_price }}",
                     parsed_price="{{ sample.parsed_price }}",
+                    normalized_unit_quantity="{{ sample.normalized_unit_quantity }}",
+                    normalized_unit_type="{{ sample.normalized_unit_type }}",
+                    unit_price="{{ sample.unit_price }}",
+                    pack_parse_debug="{{ sample.pack_parse_debug }}",
                     normalized_description="{{ sample.normalized_description }}"
                   </li>
                 {% endfor %}
@@ -607,9 +617,13 @@
           <tr>
             <th>Product Description</th>
             <th>Sysco Price</th>
+            <th>Sysco Unit Price</th>
             <th>US Foods Price</th>
+            <th>US Foods Unit Price</th>
             <th>PFG Price</th>
-            <th>Cheapest Vendor</th>
+            <th>PFG Unit Price</th>
+            <th>Cheapest by Case</th>
+            <th>Cheapest by Unit</th>
           </tr>
         </thead>
         <tbody>
@@ -617,22 +631,26 @@
             {% for row in rows %}
               <tr>
                 <td>{{ row.description }}</td>
-                <td class="{% if row.cheapest_vendor == 'Sysco' %}cheapest{% endif %}">{{ row.sysco }}</td>
-                <td class="{% if row.cheapest_vendor == 'US Foods' %}cheapest{% endif %}">{{ row.us_foods }}</td>
-                <td class="{% if row.cheapest_vendor == 'PFG' %}cheapest{% endif %}">{{ row.pfg }}</td>
-                <td>{{ row.cheapest_vendor }}</td>
+                <td class="{% if row.cheapest_case_vendor == 'Sysco' %}cheapest{% endif %}">{{ row.sysco }}</td>
+                <td class="{% if row.cheapest_unit_vendor == 'Sysco' %}cheapest-unit{% endif %}">{{ row.sysco_unit_price }}</td>
+                <td class="{% if row.cheapest_case_vendor == 'US Foods' %}cheapest{% endif %}">{{ row.us_foods }}</td>
+                <td class="{% if row.cheapest_unit_vendor == 'US Foods' %}cheapest-unit{% endif %}">{{ row.us_foods_unit_price }}</td>
+                <td class="{% if row.cheapest_case_vendor == 'PFG' %}cheapest{% endif %}">{{ row.pfg }}</td>
+                <td class="{% if row.cheapest_unit_vendor == 'PFG' %}cheapest-unit{% endif %}">{{ row.pfg_unit_price }}</td>
+                <td>{{ row.cheapest_case_vendor }}</td>
+                <td>{{ row.unit_review_note if row.unit_review_note else row.cheapest_unit_vendor }}</td>
               </tr>
             {% endfor %}
           {% else %}
             <tr>
-              <td colspan="5">No comparison data yet. Upload one or more vendor CSV files to build the table.</td>
+              <td colspan="9">No comparison data yet. Upload one or more vendor CSV files to build the table.</td>
             </tr>
           {% endif %}
         </tbody>
       </table>
     </div>
 
-    <p class="muted">Note: This version matches by a cleaned description (lowercase + spaces normalized + punctuation removed).</p>
+    <p class="muted">Note: Case price and normalized unit price are both shown. Unit comparisons are skipped when unit types are incompatible.</p>
   </main>
   <script>
     (function () {

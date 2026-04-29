@@ -75,9 +75,14 @@ def build_basic_comparison_rows(rows: List[Dict[str, Optional[float]]]) -> List[
             {
                 "description": description,
                 "sysco": f"${prices['sysco']:.2f}" if prices["sysco"] is not None else "",
+                "sysco_unit_price": "Needs review",
                 "us_foods": f"${prices['us_foods']:.2f}" if prices["us_foods"] is not None else "",
+                "us_foods_unit_price": "Needs review",
                 "pfg": f"${prices['pfg']:.2f}" if prices["pfg"] is not None else "",
-                "cheapest_vendor": cheapest_vendor,
+                "pfg_unit_price": "Needs review",
+                "cheapest_case_vendor": cheapest_vendor,
+                "cheapest_unit_vendor": "",
+                "unit_review_note": "Needs review",
             }
         )
     return output
@@ -316,6 +321,75 @@ def parse_price_to_float(price_text: str) -> Optional[float]:
         return float(cleaned)
     except ValueError:
         return None
+
+
+def parse_pack_size(pack_size_text: str) -> Dict[str, Any]:
+    text = (pack_size_text or "").strip().lower()
+    compact = re.sub(r"\s+", " ", text)
+    result: Dict[str, Any] = {
+        "pack_size_text": pack_size_text or "",
+        "normalized_unit_quantity": None,
+        "normalized_unit_type": "",
+        "parse_debug": "Could not parse pack size.",
+    }
+    if compact == "":
+        result["parse_debug"] = "Pack size empty."
+        return result
+
+    unit_aliases = {
+        "ct": "each",
+        "count": "each",
+        "ea": "each",
+        "each": "each",
+        "lb": "lb",
+        "lbs": "lb",
+        "gal": "gal",
+        "gallon": "gal",
+        "gallons": "gal",
+        "oz": "oz",
+        "dozen": "dozen",
+        "dz": "dozen",
+    }
+
+    match_pack = re.match(r"^\s*(\d+)\s*/\s*(\d+(?:\.\d+)?)\s*([a-z]+)\s*$", compact)
+    if match_pack:
+        outer = float(match_pack.group(1))
+        inner = float(match_pack.group(2))
+        unit_raw = match_pack.group(3)
+        unit = unit_aliases.get(unit_raw, unit_raw)
+        if unit == "dozen":
+            quantity = outer * inner * 12.0
+            unit = "each"
+        else:
+            quantity = outer * inner
+        result.update(
+            {
+                "normalized_unit_quantity": quantity,
+                "normalized_unit_type": unit,
+                "parse_debug": f"Parsed '{compact}' as {outer} x {inner} {unit}.",
+            }
+        )
+        return result
+
+    match_simple = re.match(r"^\s*(\d+(?:\.\d+)?)\s*([a-z]+)\s*$", compact)
+    if match_simple:
+        qty = float(match_simple.group(1))
+        unit_raw = match_simple.group(2)
+        unit = unit_aliases.get(unit_raw, unit_raw)
+        if unit == "dozen":
+            qty = qty * 12.0
+            unit = "each"
+        result.update(
+            {
+                "normalized_unit_quantity": qty,
+                "normalized_unit_type": unit,
+                "parse_debug": f"Parsed '{compact}' as {qty} {unit}.",
+            }
+        )
+        return result
+
+    result["parse_debug"] = f"Unsupported pack format: '{compact}'."
+    return result
 
 
 # Build a simple cleaned description for matching similar products across files.
@@ -672,15 +746,27 @@ def parse_vendor_text(
         if not description and not raw_price and not item_number and not pack_size:
             continue
 
+        parsed_price = parse_price_to_float(raw_price)
+        pack_parse = parse_pack_size(pack_size)
+        normalized_qty = pack_parse.get("normalized_unit_quantity")
+        normalized_unit_type = str(pack_parse.get("normalized_unit_type") or "")
+        unit_price = None
+        if parsed_price is not None and normalized_qty and float(normalized_qty) > 0:
+            unit_price = parsed_price / float(normalized_qty)
+
         parsed_row = {
             "vendor": vendor_name,
             "description": description,
             "item_number": item_number,
             "pack_size": pack_size,
-            "price": parse_price_to_float(raw_price),
+            "price": parsed_price,
             "normalized_description": clean_description_for_match(description),
             "alias_expanded_description": clean_description_for_match(description),
             "final_tokens": build_meaningful_tokens(clean_description_for_match(description)),
+            "normalized_unit_quantity": normalized_qty,
+            "normalized_unit_type": normalized_unit_type,
+            "unit_price": unit_price,
+            "pack_parse_debug": pack_parse.get("parse_debug", ""),
             "core_tokens": [],
             "attribute_tokens": [],
             "size_tokens": [],
@@ -700,6 +786,10 @@ def parse_vendor_text(
                     "pack_size": pack_size,
                     "raw_price": raw_price,
                     "parsed_price": parsed_row["price"],
+                    "normalized_unit_quantity": parsed_row["normalized_unit_quantity"],
+                    "normalized_unit_type": parsed_row["normalized_unit_type"],
+                    "unit_price": parsed_row["unit_price"],
+                    "pack_parse_debug": parsed_row["pack_parse_debug"],
                     "normalized_description": parsed_row["normalized_description"],
                     "alias_expanded_description": parsed_row["alias_expanded_description"],
                     "final_tokens": parsed_row["final_tokens"],
@@ -921,6 +1011,12 @@ def build_comparison_rows(
                 "sysco": None,
                 "us_foods": None,
                 "pfg": None,
+                "sysco_unit_price": None,
+                "us_foods_unit_price": None,
+                "pfg_unit_price": None,
+                "sysco_unit_type": "",
+                "us_foods_unit_type": "",
+                "pfg_unit_type": "",
             }
         else:
             combined[final_group_key]["display_description"] = choose_clearer_description(
@@ -972,21 +1068,26 @@ def build_comparison_rows(
         )
 
         price = row.get("price")
+        unit_price = row.get("unit_price")
+        unit_type = str(row.get("normalized_unit_type") or "")
         if vendor == "Sysco":
             current = combined[final_group_key]["sysco"]
-            combined[final_group_key]["sysco"] = (
-                price if current is None or (price is not None and price < current) else current
-            )
+            if current is None or (price is not None and price < current):
+                combined[final_group_key]["sysco"] = price
+                combined[final_group_key]["sysco_unit_price"] = unit_price
+                combined[final_group_key]["sysco_unit_type"] = unit_type
         elif vendor == "US Foods":
             current = combined[final_group_key]["us_foods"]
-            combined[final_group_key]["us_foods"] = (
-                price if current is None or (price is not None and price < current) else current
-            )
+            if current is None or (price is not None and price < current):
+                combined[final_group_key]["us_foods"] = price
+                combined[final_group_key]["us_foods_unit_price"] = unit_price
+                combined[final_group_key]["us_foods_unit_type"] = unit_type
         elif vendor == "PFG":
             current = combined[final_group_key]["pfg"]
-            combined[final_group_key]["pfg"] = (
-                price if current is None or (price is not None and price < current) else current
-            )
+            if current is None or (price is not None and price < current):
+                combined[final_group_key]["pfg"] = price
+                combined[final_group_key]["pfg_unit_price"] = unit_price
+                combined[final_group_key]["pfg_unit_type"] = unit_type
 
     output: List[Dict[str, str]] = []
     for _, prices in sorted(combined.items(), key=lambda item: item[1]["display_description"].lower()):
@@ -996,14 +1097,50 @@ def build_comparison_rows(
             "PFG": prices["pfg"],
         }
         available = {vendor: value for vendor, value in vendor_prices.items() if value is not None}
-        cheapest_vendor = min(available, key=available.get) if available else ""
+        cheapest_case_vendor = min(available, key=available.get) if available else ""
+
+        unit_vendor_prices = {
+            "Sysco": {"price": prices["sysco_unit_price"], "type": prices["sysco_unit_type"]},
+            "US Foods": {"price": prices["us_foods_unit_price"], "type": prices["us_foods_unit_type"]},
+            "PFG": {"price": prices["pfg_unit_price"], "type": prices["pfg_unit_type"]},
+        }
+        available_unit_prices = {
+            vendor: data for vendor, data in unit_vendor_prices.items() if data["price"] is not None
+        }
+        cheapest_unit_vendor = ""
+        unit_review_note = ""
+        if available_unit_prices:
+            unit_types = {str(data["type"]) for data in available_unit_prices.values() if str(data["type"])}
+            if len(unit_types) > 1:
+                unit_review_note = "Unit mismatch — review needed."
+            else:
+                cheapest_unit_vendor = min(
+                    available_unit_prices, key=lambda v: float(available_unit_prices[v]["price"])
+                )
         output.append(
             {
                 "description": str(prices["display_description"]),
                 "sysco": f"${prices['sysco']:.2f}" if prices["sysco"] is not None else "",
                 "us_foods": f"${prices['us_foods']:.2f}" if prices["us_foods"] is not None else "",
                 "pfg": f"${prices['pfg']:.2f}" if prices["pfg"] is not None else "",
-                "cheapest_vendor": cheapest_vendor,
+                "sysco_unit_price": (
+                    f"${prices['sysco_unit_price']:.2f} / {prices['sysco_unit_type']}"
+                    if prices["sysco_unit_price"] is not None and prices["sysco_unit_type"]
+                    else "Needs review"
+                ),
+                "us_foods_unit_price": (
+                    f"${prices['us_foods_unit_price']:.2f} / {prices['us_foods_unit_type']}"
+                    if prices["us_foods_unit_price"] is not None and prices["us_foods_unit_type"]
+                    else "Needs review"
+                ),
+                "pfg_unit_price": (
+                    f"${prices['pfg_unit_price']:.2f} / {prices['pfg_unit_type']}"
+                    if prices["pfg_unit_price"] is not None and prices["pfg_unit_type"]
+                    else "Needs review"
+                ),
+                "cheapest_case_vendor": cheapest_case_vendor,
+                "cheapest_unit_vendor": cheapest_unit_vendor,
+                "unit_review_note": unit_review_note,
             }
         )
 
