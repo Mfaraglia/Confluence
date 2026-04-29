@@ -392,6 +392,48 @@ def parse_pack_size(pack_size_text: str) -> Dict[str, Any]:
     return result
 
 
+def compute_unit_pricing_for_grouped_row(grouped_row: Dict[str, Any]) -> Dict[str, Any]:
+    # Unit pricing is intentionally isolated from matching/grouping.
+    # It reads final grouped vendor case prices + pack sizes and computes vendor unit prices.
+    vendor_unit_data: Dict[str, Dict[str, Any]] = {}
+    for vendor_key in ["sysco", "us_foods", "pfg"]:
+        case_price = grouped_row.get(vendor_key)
+        pack_size_text = str(grouped_row.get(f"{vendor_key}_pack_size") or "")
+        parsed_pack = parse_pack_size(pack_size_text)
+        qty = parsed_pack.get("normalized_unit_quantity")
+        unit_type = str(parsed_pack.get("normalized_unit_type") or "")
+        unit_price = None
+        if case_price is not None and qty and float(qty) > 0:
+            unit_price = float(case_price) / float(qty)
+        vendor_unit_data[vendor_key] = {
+            "unit_price": unit_price,
+            "unit_type": unit_type,
+            "pack_parse_debug": parsed_pack.get("parse_debug", ""),
+        }
+
+    available = {
+        key: value
+        for key, value in vendor_unit_data.items()
+        if value["unit_price"] is not None and value["unit_type"]
+    }
+    cheapest_unit_vendor = ""
+    unit_review_note = ""
+    if available:
+        unit_types = {value["unit_type"] for value in available.values()}
+        if len(unit_types) > 1:
+            unit_review_note = "Unit mismatch — review needed."
+        else:
+            winner = min(available, key=lambda k: float(available[k]["unit_price"]))
+            vendor_name_map = {"sysco": "Sysco", "us_foods": "US Foods", "pfg": "PFG"}
+            cheapest_unit_vendor = vendor_name_map[winner]
+
+    return {
+        "vendors": vendor_unit_data,
+        "cheapest_unit_vendor": cheapest_unit_vendor,
+        "unit_review_note": unit_review_note,
+    }
+
+
 # Build a simple cleaned description for matching similar products across files.
 # Rules:
 # 1) lowercase + trim
@@ -1011,12 +1053,9 @@ def build_comparison_rows(
                 "sysco": None,
                 "us_foods": None,
                 "pfg": None,
-                "sysco_unit_price": None,
-                "us_foods_unit_price": None,
-                "pfg_unit_price": None,
-                "sysco_unit_type": "",
-                "us_foods_unit_type": "",
-                "pfg_unit_type": "",
+                "sysco_pack_size": "",
+                "us_foods_pack_size": "",
+                "pfg_pack_size": "",
             }
         else:
             combined[final_group_key]["display_description"] = choose_clearer_description(
@@ -1068,26 +1107,22 @@ def build_comparison_rows(
         )
 
         price = row.get("price")
-        unit_price = row.get("unit_price")
-        unit_type = str(row.get("normalized_unit_type") or "")
+        pack_size_text = str(row.get("pack_size") or "")
         if vendor == "Sysco":
             current = combined[final_group_key]["sysco"]
             if current is None or (price is not None and price < current):
                 combined[final_group_key]["sysco"] = price
-                combined[final_group_key]["sysco_unit_price"] = unit_price
-                combined[final_group_key]["sysco_unit_type"] = unit_type
+                combined[final_group_key]["sysco_pack_size"] = pack_size_text
         elif vendor == "US Foods":
             current = combined[final_group_key]["us_foods"]
             if current is None or (price is not None and price < current):
                 combined[final_group_key]["us_foods"] = price
-                combined[final_group_key]["us_foods_unit_price"] = unit_price
-                combined[final_group_key]["us_foods_unit_type"] = unit_type
+                combined[final_group_key]["us_foods_pack_size"] = pack_size_text
         elif vendor == "PFG":
             current = combined[final_group_key]["pfg"]
             if current is None or (price is not None and price < current):
                 combined[final_group_key]["pfg"] = price
-                combined[final_group_key]["pfg_unit_price"] = unit_price
-                combined[final_group_key]["pfg_unit_type"] = unit_type
+                combined[final_group_key]["pfg_pack_size"] = pack_size_text
 
     output: List[Dict[str, str]] = []
     for _, prices in sorted(combined.items(), key=lambda item: item[1]["display_description"].lower()):
@@ -1099,24 +1134,10 @@ def build_comparison_rows(
         available = {vendor: value for vendor, value in vendor_prices.items() if value is not None}
         cheapest_case_vendor = min(available, key=available.get) if available else ""
 
-        unit_vendor_prices = {
-            "Sysco": {"price": prices["sysco_unit_price"], "type": prices["sysco_unit_type"]},
-            "US Foods": {"price": prices["us_foods_unit_price"], "type": prices["us_foods_unit_type"]},
-            "PFG": {"price": prices["pfg_unit_price"], "type": prices["pfg_unit_type"]},
-        }
-        available_unit_prices = {
-            vendor: data for vendor, data in unit_vendor_prices.items() if data["price"] is not None
-        }
-        cheapest_unit_vendor = ""
-        unit_review_note = ""
-        if available_unit_prices:
-            unit_types = {str(data["type"]) for data in available_unit_prices.values() if str(data["type"])}
-            if len(unit_types) > 1:
-                unit_review_note = "Unit mismatch — review needed."
-            else:
-                cheapest_unit_vendor = min(
-                    available_unit_prices, key=lambda v: float(available_unit_prices[v]["price"])
-                )
+        unit_pricing = compute_unit_pricing_for_grouped_row(prices)
+        unit_vendors = unit_pricing["vendors"]
+        cheapest_unit_vendor = unit_pricing["cheapest_unit_vendor"]
+        unit_review_note = unit_pricing["unit_review_note"]
         output.append(
             {
                 "description": str(prices["display_description"]),
@@ -1124,20 +1145,21 @@ def build_comparison_rows(
                 "us_foods": f"${prices['us_foods']:.2f}" if prices["us_foods"] is not None else "",
                 "pfg": f"${prices['pfg']:.2f}" if prices["pfg"] is not None else "",
                 "sysco_unit_price": (
-                    f"${prices['sysco_unit_price']:.2f} / {prices['sysco_unit_type']}"
-                    if prices["sysco_unit_price"] is not None and prices["sysco_unit_type"]
+                    f"${unit_vendors['sysco']['unit_price']:.2f} / {unit_vendors['sysco']['unit_type']}"
+                    if unit_vendors["sysco"]["unit_price"] is not None and unit_vendors["sysco"]["unit_type"]
                     else "Needs review"
                 ),
                 "us_foods_unit_price": (
-                    f"${prices['us_foods_unit_price']:.2f} / {prices['us_foods_unit_type']}"
-                    if prices["us_foods_unit_price"] is not None and prices["us_foods_unit_type"]
+                    f"${unit_vendors['us_foods']['unit_price']:.2f} / {unit_vendors['us_foods']['unit_type']}"
+                    if unit_vendors["us_foods"]["unit_price"] is not None and unit_vendors["us_foods"]["unit_type"]
                     else "Needs review"
                 ),
                 "pfg_unit_price": (
-                    f"${prices['pfg_unit_price']:.2f} / {prices['pfg_unit_type']}"
-                    if prices["pfg_unit_price"] is not None and prices["pfg_unit_type"]
+                    f"${unit_vendors['pfg']['unit_price']:.2f} / {unit_vendors['pfg']['unit_type']}"
+                    if unit_vendors["pfg"]["unit_price"] is not None and unit_vendors["pfg"]["unit_type"]
                     else "Needs review"
                 ),
+                "cheapest_vendor": cheapest_case_vendor,
                 "cheapest_case_vendor": cheapest_case_vendor,
                 "cheapest_unit_vendor": cheapest_unit_vendor,
                 "unit_review_note": unit_review_note,
@@ -1152,6 +1174,8 @@ def build_comparison_rows(
         "left_unmatched": stats["left_unmatched"],
         "forced_group_keys_created": len(forced_groups_debug),
         "forced_group_assignments": forced_groups_debug,
+        "matching_completed_before_unit_pricing": True,
+        "grouped_products_before_unit_pricing": len(combined),
     }
 
     us_items = [entry for entry in parsed_entries if entry["vendor"] == "US Foods"]
