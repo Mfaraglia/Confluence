@@ -1182,6 +1182,9 @@ def index():
             upload_id = request.form.get("upload_id", "")
             match_memory = load_match_memory()
             debug_counters["confirmed_matches_loaded"] = len(match_memory.get("confirmed", {}))
+            debug_counters["match_memory_loaded"] = bool(
+                debug_counters["confirmed_matches_loaded"] or len(match_memory.get("rejected", set()))
+            )
 
             session_id = get_session_id()
             session_memory = SESSION_REVIEW_MEMORY.get(session_id, {"confirmed": {}, "rejected": set()})
@@ -1450,12 +1453,31 @@ def index():
                         match_memory["confirmed"] = dict(confirmed)
                         match_memory["rejected"] = set(rejected)
                         save_match_memory(match_memory)
+                        # Keep session memory in sync so confirmed pairs apply immediately.
+                        SESSION_REVIEW_MEMORY[session_id] = {
+                            "confirmed": dict(match_memory.get("confirmed", {})),
+                            "rejected": set(match_memory.get("rejected", set())),
+                        }
+                        session["match_memory_fallback"] = {
+                            "confirmed": match_memory.get("confirmed", {}),
+                            "rejected": sorted(list(match_memory.get("rejected", set()))),
+                        }
+                        # Update startup-like debug state after successful import.
+                        STARTUP_MATCH_MEMORY_STATUS["loaded"] = True
+                        STARTUP_MATCH_MEMORY_STATUS["confirmed"] = len(match_memory["confirmed"])
+                        STARTUP_MATCH_MEMORY_STATUS["rejected"] = len(match_memory["rejected"])
+                        debug_counters["match_memory_loaded"] = True
+                        debug_counters["confirmed_matches_in_file"] = len(match_memory["confirmed"])
+                        debug_counters["rejected_matches_in_file"] = len(match_memory["rejected"])
+                        debug_counters["confirmed_matches_loaded"] = len(match_memory["confirmed"])
                         review_success_messages.append(
                             f"Imported match memory: confirmed={len(match_memory['confirmed'])}, rejected={len(match_memory['rejected'])}."
                         )
                     except Exception as exc:
+                        debug_counters["match_memory_loaded"] = False
                         review_error_messages.append(f"Import match memory failed: {exc}")
                 else:
+                    debug_counters["match_memory_loaded"] = False
                     review_error_messages.append("Please choose a match_memory.json file to import.")
 
                 if not upload_id:
