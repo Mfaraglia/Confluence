@@ -14,7 +14,8 @@ app = Flask(__name__)
 app.secret_key = "dev-secret-key-change-me"
 MATCH_MEMORY_FILE = "match_memory.json"
 # Preview-safe mode: avoid depending on local file writes (can fail on Vercel).
-ENABLE_FILE_PERSISTENCE = os.getenv("ENABLE_FILE_PERSISTENCE", "false").lower() == "true"
+IS_VERCEL = os.getenv("VERCEL", "").lower() in {"1", "true", "yes"}
+ENABLE_FILE_PERSISTENCE = (os.getenv("ENABLE_FILE_PERSISTENCE", "false").lower() == "true") and (not IS_VERCEL)
 STARTUP_MATCH_MEMORY_STATUS: Dict[str, Any] = {"loaded": False, "confirmed": 0, "rejected": 0}
 
 # Simple in-memory cache for uploaded CSV text between two submits:
@@ -45,6 +46,7 @@ def load_match_memory() -> Dict[str, Any]:
 
 
 def save_match_memory(memory: Dict[str, Any]) -> None:
+    # Vercel deployments use a read-only project filesystem, so writing local files is disabled there.
     if not ENABLE_FILE_PERSISTENCE:
         return
     with open(MATCH_MEMORY_FILE, "w", encoding="utf-8") as f:
