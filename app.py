@@ -6,7 +6,7 @@ import re
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
-from flask import Flask, render_template, request, session
+from flask import Flask, Response, render_template, request, session
 from manual_overrides import MANUAL_MATCH_OVERRIDES
 
 app = Flask(__name__)
@@ -14,6 +14,7 @@ app.secret_key = "dev-secret-key-change-me"
 MATCH_MEMORY_FILE = "match_memory.json"
 # Preview-safe mode: avoid depending on local file writes (can fail on Vercel).
 ENABLE_FILE_PERSISTENCE = False
+STARTUP_MATCH_MEMORY_STATUS: Dict[str, Any] = {"loaded": False, "confirmed": 0, "rejected": 0}
 
 # Simple in-memory cache for uploaded CSV text between two submits:
 # 1) upload file(s)
@@ -27,17 +28,22 @@ def load_match_memory() -> Dict[str, Any]:
     try:
         with open(MATCH_MEMORY_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-            return {
+            memory = {
                 "confirmed": data.get("confirmed", {}),
                 "rejected": set(data.get("rejected", [])),
             }
+            STARTUP_MATCH_MEMORY_STATUS["loaded"] = True
+            STARTUP_MATCH_MEMORY_STATUS["confirmed"] = len(memory["confirmed"])
+            STARTUP_MATCH_MEMORY_STATUS["rejected"] = len(memory["rejected"])
+            return memory
     except Exception:
+        STARTUP_MATCH_MEMORY_STATUS["loaded"] = False
+        STARTUP_MATCH_MEMORY_STATUS["confirmed"] = 0
+        STARTUP_MATCH_MEMORY_STATUS["rejected"] = 0
         return {"confirmed": {}, "rejected": set()}
 
 
 def save_match_memory(memory: Dict[str, Any]) -> None:
-    if not ENABLE_FILE_PERSISTENCE:
-        return
     with open(MATCH_MEMORY_FILE, "w", encoding="utf-8") as f:
         json.dump(
             {
@@ -47,6 +53,10 @@ def save_match_memory(memory: Dict[str, Any]) -> None:
             f,
             indent=2,
         )
+
+
+# Load match memory once on startup so the app has durable state immediately.
+_ = load_match_memory()
 
 
 def build_basic_comparison_rows(rows: List[Dict[str, Optional[float]]]) -> List[Dict[str, str]]:
@@ -1159,6 +1169,9 @@ def index():
         "confirmed_matches_loaded": 0,
         "forced_matches_applied": 0,
         "review_items_remaining": 0,
+        "match_memory_loaded": STARTUP_MATCH_MEMORY_STATUS["loaded"],
+        "confirmed_matches_in_file": STARTUP_MATCH_MEMORY_STATUS["confirmed"],
+        "rejected_matches_in_file": STARTUP_MATCH_MEMORY_STATUS["rejected"],
     }
 
     if request.method == "POST":
@@ -1426,6 +1439,37 @@ def index():
                     debug_counters["rows_parsed_per_vendor"][vendor_name] += len(rows)
                     errors.extend(file_errors)
                     debug_details.append(debug_info)
+            elif action == "import_match_memory":
+                failed_step = "review save"
+                import_file = request.files.get("match_memory_file")
+                if import_file and import_file.filename:
+                    try:
+                        imported_data = json.load(import_file.stream)
+                        confirmed = imported_data.get("confirmed", {})
+                        rejected = imported_data.get("rejected", [])
+                        match_memory["confirmed"] = dict(confirmed)
+                        match_memory["rejected"] = set(rejected)
+                        save_match_memory(match_memory)
+                        review_success_messages.append(
+                            f"Imported match memory: confirmed={len(match_memory['confirmed'])}, rejected={len(match_memory['rejected'])}."
+                        )
+                    except Exception as exc:
+                        review_error_messages.append(f"Import match memory failed: {exc}")
+                else:
+                    review_error_messages.append("Please choose a match_memory.json file to import.")
+
+                if not upload_id:
+                    upload_id = session.get("last_upload_id", "")
+                cached_vendor_files = UPLOAD_CACHE.get(upload_id, {})
+                for vendor_name, _, _ in vendor_keys:
+                    file_text = cached_vendor_files.get(vendor_name, "")
+                    if not file_text:
+                        continue
+                    rows, file_errors, debug_info = parse_vendor_text(vendor_name, file_text, None)
+                    all_vendor_rows.extend(rows)
+                    debug_counters["rows_parsed_per_vendor"][vendor_name] += len(rows)
+                    errors.extend(file_errors)
+                    debug_details.append(debug_info)
 
             if not all_vendor_rows and not errors and action == "upload":
                 errors.append("Please upload at least one CSV file.")
@@ -1485,6 +1529,20 @@ def index():
         match_review_buckets=match_review_buckets,
         match_matrix_stats=match_matrix_stats,
         review_batch_debug=review_batch_debug,
+    )
+
+
+@app.route("/export-match-memory", methods=["GET"])
+def export_match_memory():
+    memory = load_match_memory()
+    payload = {
+        "confirmed": memory.get("confirmed", {}),
+        "rejected": sorted(list(memory.get("rejected", set()))),
+    }
+    return Response(
+        json.dumps(payload, indent=2),
+        mimetype="application/json",
+        headers={"Content-Disposition": f"attachment; filename={MATCH_MEMORY_FILE}"},
     )
 
 

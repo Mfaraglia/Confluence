@@ -219,6 +219,21 @@
       shows prices side by side, and marks the cheapest available vendor.
     </p>
 
+    <section class="debug-summary" aria-label="Match memory controls">
+      <strong>Match Memory Controls</strong>
+      <div style="margin-top:8px;">
+        <a href="/export-match-memory"><button type="button">Export Match Memory</button></a>
+      </div>
+      <form method="POST" enctype="multipart/form-data" style="margin-top:8px;">
+        <input type="hidden" name="action" value="import_match_memory">
+        <label for="match_memory_file">Import Match Memory JSON</label>
+        <input id="match_memory_file" type="file" name="match_memory_file" accept=".json">
+        <div style="margin-top:8px;">
+          <button type="submit">Import Match Memory</button>
+        </div>
+      </form>
+    </section>
+
     <!-- multipart/form-data is required for file uploads -->
     <form method="POST" enctype="multipart/form-data">
       <input type="hidden" name="action" value="upload">
@@ -381,6 +396,9 @@
         <p><strong>Confirmed matches loaded:</strong> {{ debug_counters.confirmed_matches_loaded if debug_counters.confirmed_matches_loaded is not none else 0 }}</p>
         <p><strong>Forced matches applied:</strong> {{ debug_counters.forced_matches_applied if debug_counters.forced_matches_applied is not none else 0 }}</p>
         <p><strong>Review items remaining:</strong> {{ debug_counters.review_items_remaining if debug_counters.review_items_remaining is not none else 0 }}</p>
+        <p><strong>Match memory loaded:</strong> {{ "Yes" if debug_counters.match_memory_loaded else "No" }}</p>
+        <p><strong>Confirmed matches loaded from file:</strong> {{ debug_counters.confirmed_matches_in_file if debug_counters.confirmed_matches_in_file is not none else 0 }}</p>
+        <p><strong>Rejected matches loaded from file:</strong> {{ debug_counters.rejected_matches_in_file if debug_counters.rejected_matches_in_file is not none else 0 }}</p>
       </section>
     {% endif %}
 
