@@ -1,0 +1,689 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Restaurant Vendor Price Comparison</title>
+  <style>
+    :root {
+      --bg: #f7f8fb;
+      --card: #ffffff;
+      --border: #d7deea;
+      --text: #1f2937;
+      --muted: #4b5563;
+      --accent: #2563eb;
+      --error-bg: #fdecec;
+      --error-text: #991b1b;
+      --success-bg: #e8f8ee;
+      --success-text: #10683c;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 24px;
+    }
+
+    .page {
+      max-width: 1100px;
+      margin: 0 auto;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 24px;
+      box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 1.8rem;
+      color: var(--accent);
+    }
+
+    .subtitle {
+      margin: 0 0 18px;
+      color: var(--muted);
+      font-size: 1rem;
+    }
+
+    .instructions {
+      margin: 0 0 18px;
+      color: var(--text);
+      background: #f3f6ff;
+      border: 1px solid #dbe4ff;
+      border-radius: 8px;
+      padding: 12px;
+      font-size: 0.95rem;
+    }
+
+    .upload-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .upload-card {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      background: #fff;
+    }
+
+    label {
+      display: block;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    input[type="file"] { width: 100%; }
+    select {
+      width: 100%;
+      padding: 6px;
+      margin-bottom: 10px;
+    }
+
+    .actions { margin-bottom: 18px; }
+
+    button {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 10px 14px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .errors {
+      margin-bottom: 16px;
+      background: var(--error-bg);
+      color: var(--error-text);
+      border: 1px solid #f5c2c2;
+      border-radius: 8px;
+      padding: 12px;
+    }
+
+    .errors ul {
+      margin: 8px 0 0;
+      padding-left: 18px;
+    }
+
+    .table-wrap { overflow-x: auto; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 850px;
+    }
+
+    th, td {
+      border: 1px solid var(--border);
+      padding: 10px;
+      text-align: left;
+      font-size: 0.94rem;
+    }
+
+    th {
+      background: #eef2ff;
+      color: #1e3a8a;
+      font-weight: 700;
+    }
+
+    tr:nth-child(even) td {
+      background: #fbfcff;
+    }
+
+    .cheapest {
+      background: var(--success-bg) !important;
+      color: var(--success-text);
+      font-weight: 700;
+    }
+
+
+    .muted {
+      color: var(--muted);
+      font-style: italic;
+      margin-top: 8px;
+    }
+
+    .debug {
+      margin: 18px 0;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      background: #f8fafc;
+    }
+
+    .debug h2 {
+      margin: 0 0 10px;
+      font-size: 1.1rem;
+    }
+
+    .debug-card {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+      padding: 10px;
+      margin-bottom: 10px;
+    }
+
+    .debug-card p {
+      margin: 6px 0;
+      font-size: 0.92rem;
+    }
+
+    .debug-list {
+      margin: 6px 0 0;
+      padding-left: 18px;
+      font-size: 0.9rem;
+    }
+
+    .debug-summary {
+      margin: 14px 0;
+      border: 1px solid #c9d7ff;
+      border-radius: 8px;
+      background: #eef4ff;
+      padding: 12px;
+      font-size: 0.92rem;
+    }
+
+    .debug-summary ul {
+      margin: 8px 0 0;
+      padding-left: 18px;
+    }
+
+    .sticky-review-toolbar {
+      position: sticky;
+      top: 8px;
+      z-index: 10;
+      background: #eef4ff;
+      border: 1px solid #c9d7ff;
+      border-radius: 8px;
+      padding: 10px;
+      margin-bottom: 10px;
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <h1>Restaurant Vendor Price Comparison</h1>
+    <p class="subtitle">Compare vendor pricing across Sysco, US Foods, and PFG CustomerFirst</p>
+
+    <p class="instructions">
+      Upload CSV files from one or more vendors. The app uses a cleaned product description for matching (so small punctuation/case differences still match),
+      shows prices side by side, and marks the cheapest available vendor.
+    </p>
+
+    <section class="debug-summary" aria-label="Match memory controls">
+      <strong>Match Memory Controls</strong>
+      <div style="margin-top:8px;">
+        <a href="/export-match-memory"><button type="button">Export Match Memory</button></a>
+      </div>
+      <form method="POST" enctype="multipart/form-data" style="margin-top:8px;">
+        <input type="hidden" name="action" value="import_match_memory">
+        <label for="match_memory_file">Import Match Memory JSON</label>
+        <input id="match_memory_file" type="file" name="match_memory_file" accept=".json">
+        <div style="margin-top:8px;">
+          <button type="submit">Import Match Memory</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- multipart/form-data is required for file uploads -->
+    <form method="POST" enctype="multipart/form-data">
+      <input type="hidden" name="action" value="upload">
+      <div class="upload-grid">
+        <div class="upload-card">
+          <label for="sysco_file">Upload Sysco CSV</label>
+          <input id="sysco_file" type="file" name="sysco_file" accept=".csv">
+        </div>
+        <div class="upload-card">
+          <label for="usfoods_file">Upload US Foods CSV</label>
+          <input id="usfoods_file" type="file" name="usfoods_file" accept=".csv">
+        </div>
+        <div class="upload-card">
+          <label for="pfg_file">Upload PFG CSV</label>
+          <input id="pfg_file" type="file" name="pfg_file" accept=".csv">
+        </div>
+      </div>
+      <div class="actions">
+        <button type="submit">Upload and Compare Prices</button>
+      </div>
+    </form>
+
+    {% if upload_debug.request_method == "POST" %}
+      <section class="debug-summary" aria-label="Upload debug summary">
+        <strong>Upload Debug Summary</strong>
+        <ul>
+          <li><strong>Request method:</strong> {{ upload_debug.request_method }}</li>
+          <li><strong>request.files keys:</strong> {{ upload_debug.files_keys|join(", ") if upload_debug.files_keys else "none" }}</li>
+          <li><strong>Flask received Sysco file:</strong> {{ "Yes" if upload_debug.received["Sysco"] else "No" }}</li>
+          <li><strong>Flask received US Foods file:</strong> {{ "Yes" if upload_debug.received["US Foods"] else "No" }}</li>
+          <li><strong>Flask received PFG file:</strong> {{ "Yes" if upload_debug.received["PFG"] else "No" }}</li>
+        </ul>
+      </section>
+    {% endif %}
+
+    {% if show_mapping_form %}
+      <section class="debug" aria-label="Manual column mapping">
+        <h2>Manual Column Mapping</h2>
+        <p class="muted">
+          We could not confidently find all required columns for one or more files.
+          Please map the columns below, then click <strong>Apply Column Mapping</strong>.
+        </p>
+        <form method="POST">
+          <input type="hidden" name="action" value="apply_mapping">
+          <input type="hidden" name="upload_id" value="{{ upload_id }}">
+          {% for vendor_key, option in mapping_options.items() %}
+            <div class="debug-card">
+              <p><strong>{{ option.vendor_name }}</strong></p>
+              {% set headers = option.headers %}
+              {% set selected = option.selected %}
+
+              <label for="{{ vendor_key }}_description">Product Description</label>
+              <select id="{{ vendor_key }}_description" name="{{ vendor_key }}_description">
+                <option value="">-- Select a column --</option>
+                {% for header in headers %}
+                  <option value="{{ header }}" {% if header == selected.description %}selected{% endif %}>{{ header }}</option>
+                {% endfor %}
+              </select>
+
+              <label for="{{ vendor_key }}_item_number">Item Number</label>
+              <select id="{{ vendor_key }}_item_number" name="{{ vendor_key }}_item_number">
+                <option value="">-- Select a column --</option>
+                {% for header in headers %}
+                  <option value="{{ header }}" {% if header == selected.item_number %}selected{% endif %}>{{ header }}</option>
+                {% endfor %}
+              </select>
+
+              <label for="{{ vendor_key }}_pack_size">Pack Size</label>
+              <select id="{{ vendor_key }}_pack_size" name="{{ vendor_key }}_pack_size">
+                <option value="">-- Select a column --</option>
+                {% for header in headers %}
+                  <option value="{{ header }}" {% if header == selected.pack_size %}selected{% endif %}>{{ header }}</option>
+                {% endfor %}
+              </select>
+
+              <label for="{{ vendor_key }}_price">Price</label>
+              <select id="{{ vendor_key }}_price" name="{{ vendor_key }}_price">
+                <option value="">-- Select a column --</option>
+                {% for header in headers %}
+                  <option value="{{ header }}" {% if header == selected.price %}selected{% endif %}>{{ header }}</option>
+                {% endfor %}
+              </select>
+            </div>
+          {% endfor %}
+          <button type="submit">Apply Column Mapping</button>
+        </form>
+      </section>
+    {% endif %}
+
+    {% if errors %}
+      <div class="errors" role="alert">
+        <strong>Please fix the following:</strong>
+        <ul>
+          {% for error in errors %}
+            <li>{{ error }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+
+    {% if review_success_messages %}
+      <div class="debug-summary" role="status">
+        <strong>Review Success</strong>
+        <ul>
+          {% for message in review_success_messages %}
+            <li>{{ message }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+
+    {% if review_error_messages %}
+      <div class="errors" role="alert">
+        <strong>Review Errors</strong>
+        <ul>
+          {% for message in review_error_messages %}
+            <li>{{ message }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+
+    {% if review_batch_debug %}
+      <section class="debug" aria-label="Batch review submission debug">
+        <h2>Batch Review Submission Debug</h2>
+        <p><strong>Total review decisions submitted:</strong> {{ review_batch_debug.total_review_decisions_submitted }}</p>
+        <p><strong>Matches confirmed:</strong> {{ review_batch_debug.matches_confirmed }}</p>
+        <p><strong>Matches rejected:</strong> {{ review_batch_debug.matches_rejected }}</p>
+        <p><strong>Skipped:</strong> {{ review_batch_debug.skipped }}</p>
+        <p><strong>Decision errors:</strong> {{ review_batch_debug.decision_errors }}</p>
+        <p><strong>Confirmed forced_group_keys created:</strong> {{ review_batch_debug.confirmed_forced_group_keys_created }}</p>
+        {% if review_batch_debug.forced_group_assignments %}
+          <p><strong>Product descriptions per forced_group_key:</strong></p>
+          <ul class="debug-list">
+            {% for key, descriptions in review_batch_debug.forced_group_assignments.items() %}
+              <li><strong>{{ key }}</strong>: {{ descriptions|join(", ") }}</li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+      </section>
+    {% endif %}
+
+    {% if fatal_error %}
+      <div class="errors" role="alert">
+        <strong>Readable Error Details</strong>
+        <ul>
+          <li><strong>Step failed:</strong> {{ fatal_error.failed_step }}</li>
+          <li><strong>Exception type:</strong> {{ fatal_error.exception_type }}</li>
+          <li><strong>Exception message:</strong> {{ fatal_error.exception_message }}</li>
+        </ul>
+      </div>
+    {% endif %}
+
+    {% if debug_counters %}
+      <section class="debug" aria-label="Render debug counters">
+        <h2>Render Debug Counters</h2>
+        <p><strong>Rows parsed per vendor:</strong> Sysco={{ debug_counters.rows_parsed_per_vendor.Sysco if debug_counters.rows_parsed_per_vendor else 0 }}, US Foods={{ debug_counters.rows_parsed_per_vendor["US Foods"] if debug_counters.rows_parsed_per_vendor else 0 }}, PFG={{ debug_counters.rows_parsed_per_vendor.PFG if debug_counters.rows_parsed_per_vendor else 0 }}</p>
+        <p><strong>Rows grouped:</strong> {{ debug_counters.rows_grouped if debug_counters.rows_grouped is not none else 0 }}</p>
+        <p><strong>Review candidates generated:</strong> {{ debug_counters.review_candidates_generated if debug_counters.review_candidates_generated is not none else 0 }}</p>
+        <p><strong>Confirmed matches loaded:</strong> {{ debug_counters.confirmed_matches_loaded if debug_counters.confirmed_matches_loaded is not none else 0 }}</p>
+        <p><strong>Forced matches applied:</strong> {{ debug_counters.forced_matches_applied if debug_counters.forced_matches_applied is not none else 0 }}</p>
+        <p><strong>Review items remaining:</strong> {{ debug_counters.review_items_remaining if debug_counters.review_items_remaining is not none else 0 }}</p>
+        <p><strong>Match memory loaded:</strong> {{ "Yes" if debug_counters.match_memory_loaded else "No" }}</p>
+        <p><strong>Confirmed matches loaded from file:</strong> {{ debug_counters.confirmed_matches_in_file if debug_counters.confirmed_matches_in_file is not none else 0 }}</p>
+        <p><strong>Rejected matches loaded from file:</strong> {{ debug_counters.rejected_matches_in_file if debug_counters.rejected_matches_in_file is not none else 0 }}</p>
+      </section>
+    {% endif %}
+
+    {% if debug_details %}
+      <section class="debug" aria-label="CSV debug details">
+        <h2>CSV Parse Debug</h2>
+        <p class="muted">After each upload, this section shows what the parser detected for each vendor file.</p>
+        {% for detail in debug_details %}
+          <div class="debug-card">
+            <p><strong>Vendor:</strong> {{ detail.vendor }}</p>
+            <p><strong>File uploaded:</strong> {{ "Yes" if detail.uploaded else "No" }}</p>
+            <p><strong>Parser path:</strong> {{ detail.parser_path }}</p>
+            <p><strong>Detected delimiter:</strong> {{ detail.delimiter if detail.delimiter else "N/A" }}</p>
+            <p><strong>Header row chosen:</strong> {{ detail.header_row_index if detail.header_row_index else "N/A" }}</p>
+            <p><strong>Rows skipped before table:</strong> {{ detail.skipped_intro_rows if detail.skipped_intro_rows is not none else "N/A" }}</p>
+            <p><strong>Selected columns:</strong>
+              description={{ detail.selected_columns.description if detail.selected_columns else "none" }},
+              item_number={{ detail.selected_columns.item_number if detail.selected_columns else "none" }},
+              pack_size={{ detail.selected_columns.pack_size if detail.selected_columns else "none" }},
+              price={{ detail.selected_columns.price if detail.selected_columns else "none" }}
+            </p>
+            <p><strong>Price selection reason:</strong> {{ detail.price_selection_reason if detail.price_selection_reason else "N/A" }}</p>
+            <p><strong>Detected headers:</strong>
+              {% if detail.headers %}
+                {{ detail.headers|join(", ") }}
+              {% else %}
+                none
+              {% endif %}
+            </p>
+            <p><strong>First 3 parsed rows:</strong></p>
+            {% if detail.sample_rows %}
+              <ul class="debug-list">
+                {% for sample in detail.sample_rows %}
+                  <li>
+                    description="{{ sample.description }}",
+                    item_number="{{ sample.item_number }}",
+                    pack_size="{{ sample.pack_size }}",
+                    raw_price="{{ sample.raw_price }}",
+                    parsed_price="{{ sample.parsed_price }}",
+                    normalized_description="{{ sample.normalized_description }}"
+                  </li>
+                {% endfor %}
+              </ul>
+            {% else %}
+              <p class="muted">No parsed rows available.</p>
+            {% endif %}
+          </div>
+        {% endfor %}
+      </section>
+    {% endif %}
+
+    {% if match_debug_rows %}
+      <section class="debug" aria-label="Matching debug details">
+        <h2>Matching Debug (Token-Based)</h2>
+        <p class="muted">
+          This shows how each parsed row was normalized, tokenized, and assigned to a grouped key.
+        </p>
+        <ul class="debug-list">
+          {% for item in match_debug_rows %}
+            <li>
+              original="{{ item.description }}",
+              normalized="{{ item.normalized_description }}",
+              alias_expanded_description="{{ item.alias_expanded_description }}",
+              override_group_hit="{{ item.override_group_hit }}",
+              product_family="{{ item.product_family }}",
+              inferred_product_family="{{ item.inferred_product_family }}",
+              core_tokens="{{ item.core_tokens }}",
+              attribute_tokens="{{ item.attribute_tokens }}",
+              size_tokens="{{ item.size_tokens }}",
+              match_confidence="{{ item.match_confidence }}",
+              final_group_key="{{ item.final_group_key }}"
+            </li>
+          {% endfor %}
+        </ul>
+      </section>
+    {% endif %}
+
+    {% if possible_matches %}
+      <section class="debug" aria-label="Possible match review">
+        <h2>Possible Matches (Review Needed)</h2>
+        <p class="muted">Medium-confidence matches are shown here so you can confirm or reject them.</p>
+        {% for candidate in possible_matches %}
+          <div class="debug-card">
+            <p><strong>Vendor 1 description:</strong> {{ candidate.vendor_1_description }}</p>
+            <p><strong>Vendor 2 description:</strong> {{ candidate.vendor_2_description }}</p>
+            <p><strong>Suggested reason(s):</strong> {{ candidate.reasons }}</p>
+            <p><strong>Confidence:</strong> {{ candidate.confidence }}</p>
+            <p class="muted">Use the batch Match Review section below to submit decisions all at once.</p>
+          </div>
+        {% endfor %}
+      </section>
+    {% endif %}
+
+    {% if review_stats %}
+      <section class="debug" aria-label="Review generation debug">
+        <h2>Review Generation Debug</h2>
+        <p><strong>Possible matches generated:</strong> {{ review_stats.possible_matches_generated }}</p>
+        <p><strong>Auto-grouped:</strong> {{ review_stats.auto_grouped }}</p>
+        <p><strong>Sent to review:</strong> {{ review_stats.sent_to_review }}</p>
+        <p><strong>Left unmatched:</strong> {{ review_stats.left_unmatched }}</p>
+        {% if review_stats.review_reasons %}
+          <p><strong>Why items were included in review:</strong></p>
+          <ul class="debug-list">
+            {% for reason in review_stats.review_reasons %}
+              <li>{{ reason }}</li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+      </section>
+    {% endif %}
+
+    {% if match_review_buckets %}
+      <section class="debug" aria-label="Match review matrix">
+        <h2>Match Review</h2>
+        <p class="muted">Every US Foods and PFG item appears in exactly one bucket below.</p>
+
+        {% if match_matrix_stats %}
+          <div class="debug-summary">
+            <strong>Pairwise Matrix Counters</strong>
+            <ul>
+              <li>Total US Foods items: {{ match_matrix_stats.total_us_foods_items }}</li>
+              <li>Total PFG items: {{ match_matrix_stats.total_pfg_items }}</li>
+              <li>Total pair comparisons created: {{ match_matrix_stats.total_pair_comparisons_created }}</li>
+              <li>High confidence matches: {{ match_matrix_stats.high_confidence_matches }}</li>
+              <li>Needs review: {{ match_matrix_stats.needs_review }}</li>
+              <li>No likely match found: {{ match_matrix_stats.no_match_found }}</li>
+            </ul>
+          </div>
+        {% endif %}
+
+        <h3>High confidence auto-matches</h3>
+        {% for entry in match_review_buckets.high_confidence_auto_matches %}
+          <div class="debug-card">
+            <p><strong>{{ entry.source_vendor }} item:</strong> {{ entry.source_description }}</p>
+            {% if entry.top_candidates %}
+              <p><strong>Top match:</strong> {{ entry.top_candidates[0].vendor_2_description }} (score {{ entry.top_candidates[0].score }})</p>
+            {% else %}
+              <p class="muted">No candidate rows available.</p>
+            {% endif %}
+          </div>
+        {% endfor %}
+
+        {% set review_items = match_review_buckets.needs_review + match_review_buckets.no_likely_match_found %}
+        <h3>Needs review + no likely match (batch decisions)</h3>
+        {% if review_items %}
+          <form method="POST">
+            <input type="hidden" name="action" value="submit_all_review_decisions">
+            <input type="hidden" name="upload_id" value="{{ upload_id }}">
+            <input type="hidden" name="total_review_cards" value="{{ review_items|length }}">
+
+            <div class="sticky-review-toolbar">
+              <strong>Review Toolbar</strong><br>
+              <span>Selected Match: <span id="match-count">0</span></span> |
+              <span>Selected Keep Separate: <span id="keep-separate-count">0</span></span> |
+              <span>Selected Skip: <span id="skip-count">0</span></span>
+              <div style="margin-top:8px;">
+                <button type="submit">Submit All Review Decisions</button>
+              </div>
+            </div>
+
+            {% for entry in review_items %}
+              <div class="debug-card">
+                <p><strong>{{ entry.source_vendor }} item:</strong> {{ entry.source_description }}</p>
+                {% if entry.top_candidates %}
+                  <ul class="debug-list">
+                    {% for candidate in entry.top_candidates %}
+                      <li>
+                        {{ candidate.vendor_2_description }} | score={{ candidate.score }} | family_match={{ candidate.product_family_match }} |
+                        shared_core="{{ candidate.shared_core_tokens if candidate.shared_core_tokens else 'none' }}" |
+                        alias_overlap={{ candidate.alias_overlap }} | description_similarity={{ candidate.description_similarity }} | size_overlap={{ candidate.size_overlap }}
+                      </li>
+                    {% endfor %}
+                  </ul>
+                {% else %}
+                  <p class="muted">No top candidates found. Use manual partner selection below.</p>
+                {% endif %}
+
+                <input type="hidden" name="vendor_1_description_{{ loop.index0 }}" value="{{ entry.source_description }}">
+                <input type="hidden" name="pair_key_{{ loop.index0 }}" value="{{ entry.top_candidates[0].pair_key if entry.top_candidates else '' }}">
+                <input type="hidden" name="vendor_2_description_{{ loop.index0 }}" value="{{ entry.top_candidates[0].vendor_2_description if entry.top_candidates else '' }}">
+                <input type="hidden" name="proposed_group_key_{{ loop.index0 }}" value="{{ entry.top_candidates[0].proposed_group_key if entry.top_candidates else '' }}">
+
+                <p><strong>Decision</strong></p>
+                <label><input type="radio" name="decision_{{ loop.index0 }}" value="match"> Match</label>
+                <label><input type="radio" name="decision_{{ loop.index0 }}" value="keep_separate"> Keep Separate</label>
+                <label><input type="radio" name="decision_{{ loop.index0 }}" value="skip" checked> Skip for now</label>
+
+                <p style="margin-top:8px;"><strong>Optional: choose a different match target</strong></p>
+                <select name="selected_vendor_2_description_{{ loop.index0 }}">
+                  <option value="">-- Keep default top candidate --</option>
+                  {% if entry.source_vendor == "US Foods" %}
+                    {% for candidate in entry.top_candidates %}
+                      <option value="{{ candidate.vendor_2_description }}">{{ candidate.vendor_2_description }} (top list)</option>
+                    {% endfor %}
+                    {% for description in match_review_buckets.other_vendor_options.PFG %}
+                      <option value="{{ description }}">{{ description }} (full PFG list)</option>
+                    {% endfor %}
+                  {% else %}
+                    {% for candidate in entry.top_candidates %}
+                      <option value="{{ candidate.vendor_2_description }}">{{ candidate.vendor_2_description }} (top list)</option>
+                    {% endfor %}
+                    {% for description in match_review_buckets.other_vendor_options["US Foods"] %}
+                      <option value="{{ description }}">{{ description }} (full US Foods list)</option>
+                    {% endfor %}
+                  {% endif %}
+                </select>
+                <input type="text" name="selected_proposed_group_key_{{ loop.index0 }}" placeholder="Optional group key override" style="width:100%; margin-top:6px;">
+              </div>
+            {% endfor %}
+
+            <div class="sticky-review-toolbar">
+              <strong>Ready to submit all decisions?</strong>
+              <div style="margin-top:8px;">
+                <button type="submit">Submit All Review Decisions</button>
+              </div>
+            </div>
+          </form>
+        {% else %}
+          <p class="muted">No items currently require batch review.</p>
+        {% endif %}
+      </section>
+    {% endif %}
+
+    <div class="table-wrap">
+      <table aria-label="Vendor comparison table">
+        <thead>
+          <tr>
+            <th>Product Description</th>
+            <th>Sysco Price</th>
+            <th>US Foods Price</th>
+            <th>PFG Price</th>
+            <th>Cheapest Vendor</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if rows %}
+            {% for row in rows %}
+              <tr>
+                <td>{{ row.description }}</td>
+                <td class="{% if row.cheapest_vendor == 'Sysco' %}cheapest{% endif %}">{{ row.sysco }}</td>
+                <td class="{% if row.cheapest_vendor == 'US Foods' %}cheapest{% endif %}">{{ row.us_foods }}</td>
+                <td class="{% if row.cheapest_vendor == 'PFG' %}cheapest{% endif %}">{{ row.pfg }}</td>
+                <td>{{ row.cheapest_vendor }}</td>
+              </tr>
+            {% endfor %}
+          {% else %}
+            <tr>
+              <td colspan="5">No comparison data yet. Upload one or more vendor CSV files to build the table.</td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+
+    <p class="muted">Note: This version matches by a cleaned description (lowercase + spaces normalized + punctuation removed).</p>
+  </main>
+  <script>
+    (function () {
+      const decisionInputs = document.querySelectorAll('input[type="radio"][name^="decision_"]');
+      if (!decisionInputs.length) return;
+
+      function updateCounts() {
+        let match = 0;
+        let keepSeparate = 0;
+        let skip = 0;
+        const groups = {};
+        decisionInputs.forEach((input) => {
+          if (input.checked) groups[input.name] = input.value;
+        });
+        Object.values(groups).forEach((value) => {
+          if (value === 'match') match += 1;
+          else if (value === 'keep_separate') keepSeparate += 1;
+          else skip += 1;
+        });
+        const matchEl = document.getElementById('match-count');
+        const keepEl = document.getElementById('keep-separate-count');
+        const skipEl = document.getElementById('skip-count');
+        if (matchEl) matchEl.textContent = String(match);
+        if (keepEl) keepEl.textContent = String(keepSeparate);
+        if (skipEl) skipEl.textContent = String(skip);
+      }
+
+      decisionInputs.forEach((input) => input.addEventListener('change', updateCounts));
+      updateCounts();
+    })();
+  </script>
+</body>
+</html>
