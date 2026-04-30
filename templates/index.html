@@ -224,6 +224,9 @@
       <div style="margin-top:8px;">
         <a href="/export-match-memory"><button type="button">Export Match Memory</button></a>
       </div>
+      {% if export_warning %}
+        <p style="margin-top:8px; color:#991b1b;"><strong>{{ export_warning }}</strong></p>
+      {% endif %}
       <form method="POST" enctype="multipart/form-data" style="margin-top:8px;">
         <input type="hidden" name="action" value="import_match_memory">
         <label for="match_memory_file">Import Match Memory JSON</label>
@@ -402,6 +405,10 @@
         <p><strong>Imported memory loaded:</strong> {{ "Yes" if debug_counters.imported_memory_loaded else "No" }}</p>
         <p><strong>Confirmed matches imported:</strong> {{ debug_counters.confirmed_matches_imported if debug_counters.confirmed_matches_imported is not none else 0 }}</p>
         <p><strong>Rejected matches imported:</strong> {{ debug_counters.rejected_matches_imported if debug_counters.rejected_matches_imported is not none else 0 }}</p>
+        <p><strong>Confirmed matches in session:</strong> {{ debug_counters.confirmed_matches_in_session if debug_counters.confirmed_matches_in_session is not none else 0 }}</p>
+        <p><strong>Rejected matches in session:</strong> {{ debug_counters.rejected_matches_in_session if debug_counters.rejected_matches_in_session is not none else 0 }}</p>
+        <p><strong>Confirmed matches included in export:</strong> {{ debug_counters.confirmed_matches_in_export if debug_counters.confirmed_matches_in_export is not none else 0 }}</p>
+        <p><strong>Rejected matches included in export:</strong> {{ debug_counters.rejected_matches_in_export if debug_counters.rejected_matches_in_export is not none else 0 }}</p>
       </section>
     {% endif %}
 

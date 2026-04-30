@@ -1193,6 +1193,10 @@ def index():
         "imported_memory_loaded": False,
         "confirmed_matches_imported": 0,
         "rejected_matches_imported": 0,
+        "confirmed_matches_in_session": 0,
+        "rejected_matches_in_session": 0,
+        "confirmed_matches_in_export": 0,
+        "rejected_matches_in_export": 0,
     }
 
     if request.method == "POST":
@@ -1215,6 +1219,12 @@ def index():
             if isinstance(fallback_memory, dict):
                 match_memory["confirmed"].update(fallback_memory.get("confirmed", {}))
                 match_memory["rejected"].update(set(fallback_memory.get("rejected", [])))
+            debug_counters["confirmed_matches_in_session"] = len(match_memory.get("confirmed", {}))
+            debug_counters["rejected_matches_in_session"] = len(match_memory.get("rejected", set()))
+            last_export_counts = session.get("last_export_counts", {})
+            if isinstance(last_export_counts, dict):
+                debug_counters["confirmed_matches_in_export"] = int(last_export_counts.get("confirmed", 0))
+                debug_counters["rejected_matches_in_export"] = int(last_export_counts.get("rejected", 0))
 
             failed_step = "file upload"
             upload_debug["files_keys"] = list(request.files.keys())
@@ -1431,6 +1441,9 @@ def index():
                         f"{confirmed_count} confirmed matches applied to comparison table."
                     )
                     review_success_messages.append(
+                        f"{confirmed_count} confirmed matches saved to memory"
+                    )
+                    review_success_messages.append(
                         "Forced group assignments: "
                         + "; ".join(
                             f"{group_key}: {', '.join(descriptions)}"
@@ -1580,12 +1593,17 @@ def index():
         match_review_buckets=match_review_buckets,
         match_matrix_stats=match_matrix_stats,
         review_batch_debug=review_batch_debug,
+        export_warning=str(session.get("export_warning", "")),
     )
 
 
 @app.route("/export-match-memory", methods=["GET"])
 def export_match_memory():
     memory = get_effective_match_memory()
+    confirmed_count = len(memory.get("confirmed", {}))
+    rejected_count = len(memory.get("rejected", set()))
+    session["last_export_counts"] = {"confirmed": confirmed_count, "rejected": rejected_count}
+    session["export_warning"] = "No confirmed matches are currently saved." if confirmed_count == 0 else ""
     payload = {
         "confirmed": memory.get("confirmed", {}),
         "rejected": sorted(list(memory.get("rejected", set()))),
@@ -1622,6 +1640,7 @@ def handle_internal_server_error(error):
         match_review_buckets={},
         match_matrix_stats={},
         review_batch_debug={},
+        export_warning="",
     ), 500
 
 
