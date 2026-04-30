@@ -107,6 +107,7 @@ You upload CSV files from Sysco, US Foods, and PFG, and the app builds one compa
   - rejected pairs are remembered and not suggested again
   - for active-session reliability, confirmed/rejected decisions are also mirrored in server-side session memory
   - match memory can now be exported and imported from the UI to back up or restore confirmed/rejected decisions
+  - on read-only hosting (for example Vercel), imported memory is kept in session memory so it can be applied immediately without writing project files
 - It now supports **manual column mapping** when headers are not obvious:
   - Product Description
   - Item Number

@@ -399,6 +399,9 @@
         <p><strong>Match memory loaded:</strong> {{ "Yes" if debug_counters.match_memory_loaded else "No" }}</p>
         <p><strong>Confirmed matches loaded from file:</strong> {{ debug_counters.confirmed_matches_in_file if debug_counters.confirmed_matches_in_file is not none else 0 }}</p>
         <p><strong>Rejected matches loaded from file:</strong> {{ debug_counters.rejected_matches_in_file if debug_counters.rejected_matches_in_file is not none else 0 }}</p>
+        <p><strong>Imported memory loaded:</strong> {{ "Yes" if debug_counters.imported_memory_loaded else "No" }}</p>
+        <p><strong>Confirmed matches imported:</strong> {{ debug_counters.confirmed_matches_imported if debug_counters.confirmed_matches_imported is not none else 0 }}</p>
+        <p><strong>Rejected matches imported:</strong> {{ debug_counters.rejected_matches_imported if debug_counters.rejected_matches_imported is not none else 0 }}</p>
       </section>
     {% endif %}
 

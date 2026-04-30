@@ -2,6 +2,7 @@ import csv
 from difflib import SequenceMatcher
 import io
 import json
+import os
 import re
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
@@ -13,7 +14,7 @@ app = Flask(__name__)
 app.secret_key = "dev-secret-key-change-me"
 MATCH_MEMORY_FILE = "match_memory.json"
 # Preview-safe mode: avoid depending on local file writes (can fail on Vercel).
-ENABLE_FILE_PERSISTENCE = False
+ENABLE_FILE_PERSISTENCE = os.getenv("ENABLE_FILE_PERSISTENCE", "false").lower() == "true"
 STARTUP_MATCH_MEMORY_STATUS: Dict[str, Any] = {"loaded": False, "confirmed": 0, "rejected": 0}
 
 # Simple in-memory cache for uploaded CSV text between two submits:
@@ -44,6 +45,8 @@ def load_match_memory() -> Dict[str, Any]:
 
 
 def save_match_memory(memory: Dict[str, Any]) -> None:
+    if not ENABLE_FILE_PERSISTENCE:
+        return
     with open(MATCH_MEMORY_FILE, "w", encoding="utf-8") as f:
         json.dump(
             {
@@ -57,6 +60,19 @@ def save_match_memory(memory: Dict[str, Any]) -> None:
 
 # Load match memory once on startup so the app has durable state immediately.
 _ = load_match_memory()
+
+
+def get_effective_match_memory() -> Dict[str, Any]:
+    memory = load_match_memory()
+    fallback_memory = session.get("match_memory_fallback", {})
+    if isinstance(fallback_memory, dict):
+        memory["confirmed"].update(fallback_memory.get("confirmed", {}))
+        memory["rejected"].update(set(fallback_memory.get("rejected", [])))
+    session_id = get_session_id()
+    session_memory = SESSION_REVIEW_MEMORY.get(session_id, {"confirmed": {}, "rejected": set()})
+    memory["confirmed"].update(session_memory.get("confirmed", {}))
+    memory["rejected"].update(set(session_memory.get("rejected", set())))
+    return memory
 
 
 def build_basic_comparison_rows(rows: List[Dict[str, Optional[float]]]) -> List[Dict[str, str]]:
@@ -1172,6 +1188,9 @@ def index():
         "match_memory_loaded": STARTUP_MATCH_MEMORY_STATUS["loaded"],
         "confirmed_matches_in_file": STARTUP_MATCH_MEMORY_STATUS["confirmed"],
         "rejected_matches_in_file": STARTUP_MATCH_MEMORY_STATUS["rejected"],
+        "imported_memory_loaded": False,
+        "confirmed_matches_imported": 0,
+        "rejected_matches_imported": 0,
     }
 
     if request.method == "POST":
@@ -1450,9 +1469,12 @@ def index():
                         imported_data = json.load(import_file.stream)
                         confirmed = imported_data.get("confirmed", {})
                         rejected = imported_data.get("rejected", [])
+                        if not isinstance(confirmed, dict) or not isinstance(rejected, list):
+                            raise ValueError("Invalid match memory format. Expected confirmed object and rejected list.")
                         match_memory["confirmed"] = dict(confirmed)
                         match_memory["rejected"] = set(rejected)
-                        save_match_memory(match_memory)
+                        # Do not write to project filesystem on read-only platforms (for example Vercel).
+                        # Keep imported memory in session for immediate use in this browser session.
                         # Keep session memory in sync so confirmed pairs apply immediately.
                         SESSION_REVIEW_MEMORY[session_id] = {
                             "confirmed": dict(match_memory.get("confirmed", {})),
@@ -1470,14 +1492,19 @@ def index():
                         debug_counters["confirmed_matches_in_file"] = len(match_memory["confirmed"])
                         debug_counters["rejected_matches_in_file"] = len(match_memory["rejected"])
                         debug_counters["confirmed_matches_loaded"] = len(match_memory["confirmed"])
+                        debug_counters["imported_memory_loaded"] = True
+                        debug_counters["confirmed_matches_imported"] = len(match_memory["confirmed"])
+                        debug_counters["rejected_matches_imported"] = len(match_memory["rejected"])
                         review_success_messages.append(
-                            f"Imported match memory: confirmed={len(match_memory['confirmed'])}, rejected={len(match_memory['rejected'])}."
+                            "Match memory imported and applied."
                         )
                     except Exception as exc:
                         debug_counters["match_memory_loaded"] = False
+                        debug_counters["imported_memory_loaded"] = False
                         review_error_messages.append(f"Import match memory failed: {exc}")
                 else:
                     debug_counters["match_memory_loaded"] = False
+                    debug_counters["imported_memory_loaded"] = False
                     review_error_messages.append("Please choose a match_memory.json file to import.")
 
                 if not upload_id:
@@ -1556,7 +1583,7 @@ def index():
 
 @app.route("/export-match-memory", methods=["GET"])
 def export_match_memory():
-    memory = load_match_memory()
+    memory = get_effective_match_memory()
     payload = {
         "confirmed": memory.get("confirmed", {}),
         "rejected": sorted(list(memory.get("rejected", set()))),
