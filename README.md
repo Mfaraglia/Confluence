@@ -123,6 +123,9 @@ You upload CSV files from Sysco, US Foods, and PFG, and the app builds one compa
   - form uses `enctype="multipart/form-data"`
   - all 3 file inputs and the submit button are inside the same form
   - backend reads `request.files` with matching names: `sysco_file`, `usfoods_file`, `pfg_file`
+- Unit price is now a display-only layer that runs after grouping:
+  - adds Sysco / US Foods / PFG unit-price columns and Cheapest by Unit
+  - does not change matching, grouping keys, review decisions, or forced-group behavior
 - It now safely handles messy rows where a full CSV line gets stuck in one column.
   In that case, it manually splits into:
   `description, item_number, pack_size, price`.

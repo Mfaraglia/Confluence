@@ -409,6 +409,16 @@
         <p><strong>Rejected matches in session:</strong> {{ debug_counters.rejected_matches_in_session if debug_counters.rejected_matches_in_session is not none else 0 }}</p>
         <p><strong>Confirmed matches included in export:</strong> {{ debug_counters.confirmed_matches_in_export if debug_counters.confirmed_matches_in_export is not none else 0 }}</p>
         <p><strong>Rejected matches included in export:</strong> {{ debug_counters.rejected_matches_in_export if debug_counters.rejected_matches_in_export is not none else 0 }}</p>
+        <p><strong>Matching completed before unit price:</strong> {{ review_stats.matching_completed_before_unit_price if review_stats else "N/A" }}</p>
+        <p><strong>Grouped rows before unit price:</strong> {{ review_stats.grouped_rows_before_unit_price if review_stats else 0 }}</p>
+        {% if review_stats and review_stats.unit_price_calculation_errors %}
+          <p><strong>Unit price calculation errors:</strong></p>
+          <ul class="debug-list">
+            {% for err in review_stats.unit_price_calculation_errors %}
+              <li>{{ err }}</li>
+            {% endfor %}
+          </ul>
+        {% endif %}
       </section>
     {% endif %}
 
@@ -638,9 +648,13 @@
           <tr>
             <th>Product Description</th>
             <th>Sysco Price</th>
+            <th>Sysco Unit Price</th>
             <th>US Foods Price</th>
+            <th>US Foods Unit Price</th>
             <th>PFG Price</th>
+            <th>PFG Unit Price</th>
             <th>Cheapest Vendor</th>
+            <th>Cheapest by Unit</th>
           </tr>
         </thead>
         <tbody>
@@ -649,14 +663,18 @@
               <tr>
                 <td>{{ row.description }}</td>
                 <td class="{% if row.cheapest_vendor == 'Sysco' %}cheapest{% endif %}">{{ row.sysco }}</td>
+                <td>{{ row.sysco_unit_price }}</td>
                 <td class="{% if row.cheapest_vendor == 'US Foods' %}cheapest{% endif %}">{{ row.us_foods }}</td>
+                <td>{{ row.us_foods_unit_price }}</td>
                 <td class="{% if row.cheapest_vendor == 'PFG' %}cheapest{% endif %}">{{ row.pfg }}</td>
+                <td>{{ row.pfg_unit_price }}</td>
                 <td>{{ row.cheapest_vendor }}</td>
+                <td>{{ row.cheapest_by_unit }}</td>
               </tr>
             {% endfor %}
           {% else %}
             <tr>
-              <td colspan="5">No comparison data yet. Upload one or more vendor CSV files to build the table.</td>
+              <td colspan="9">No comparison data yet. Upload one or more vendor CSV files to build the table.</td>
             </tr>
           {% endif %}
         </tbody>
