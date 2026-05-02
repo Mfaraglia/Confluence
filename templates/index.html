@@ -435,6 +435,12 @@
           </ul>
         {% endif %}
         <p><strong>Rows still needing unit review:</strong> {{ review_stats.rows_still_needing_unit_review if review_stats else 0 }}</p>
+        <p><strong>Total vendor items:</strong> {{ review_stats.total_vendor_items if review_stats else 0 }}</p>
+        <p><strong>High-confidence unit parses:</strong> {{ review_stats.high_confidence_unit_parses if review_stats else 0 }}</p>
+        <p><strong>Medium-confidence unit parses:</strong> {{ review_stats.medium_confidence_unit_parses if review_stats else 0 }}</p>
+        <p><strong>Low-confidence unit parses:</strong> {{ review_stats.low_confidence_unit_parses if review_stats else 0 }}</p>
+        <p><strong>Required unit reviews:</strong> {{ review_stats.required_unit_reviews if review_stats else 0 }}</p>
+        <p><strong>Optional unit reviews:</strong> {{ review_stats.optional_unit_reviews if review_stats else 0 }}</p>
       </section>
     {% endif %}
 
@@ -665,6 +671,7 @@
         <form method="POST">
           <input type="hidden" name="action" value="submit_unit_corrections">
           <input type="hidden" name="upload_id" value="{{ upload_id }}">
+          <label><input type="checkbox" name="show_optional_unit_reviews" value="1" {% if show_optional_unit_reviews %}checked{% endif %}> Show optional unit reviews</label>
           <input type="hidden" name="total_unit_review_items" value="{{ unit_review_items|length }}">
           {% for item in unit_review_items %}
             <div class="debug-card">
@@ -677,7 +684,8 @@
               <p>Converted unit type: {{ item.converted_unit_type if item.converted_unit_type else "N/A" }}</p>
               <p>Calculated unit price: {{ item.calculated_unit_price }}</p>
               <p>Unit price formula: {{ item.formula_used }}</p>
-              <p>Low-confidence parse: {{ "Yes" if item.low_confidence else "No" }}</p>
+              <p>Confidence: {{ item.confidence }}</p>
+              <p>Review type: {{ "Required" if item.review_required else "Optional" }}</p>
 
               <input type="hidden" name="unit_review_key_{{ loop.index0 }}" value="{{ item.review_key }}">
               <input type="hidden" name="unit_vendor_{{ loop.index0 }}" value="{{ item.vendor_name }}">

@@ -441,6 +441,18 @@ def is_low_confidence_pack_size(pack_size_text: str, unit_type: str, parse_error
     return False
 
 
+def determine_unit_parse_confidence(pack_size_text: str, parsed_qty: Optional[float], unit_type: str, parse_error: str) -> str:
+    if not pack_size_text.strip() or parse_error or parsed_qty is None:
+        return "low"
+    normalized = normalize_count_unit(unit_type)
+    if normalized in {"lb", "oz", "gal", "qt", "pt", "fl oz", "each"}:
+        text = pack_size_text.strip().lower()
+        if re.match(r"^\d+\s*/\s*\d+(?:\.\d+)?\s*[a-z ]+$", text) or re.match(r"^\d+(?:\.\d+)?\s*[a-z ]+$", text):
+            return "high"
+        return "medium"
+    return "low"
+
+
 # Build a simple cleaned description for matching similar products across files.
 # Rules:
 # 1) lowercase + trim
@@ -1123,6 +1135,12 @@ def build_comparison_rows(
     unit_price_errors: List[str] = []
     unit_corrections = match_memory.get("unit_corrections", {})
     unit_corrections_applied = 0
+    total_vendor_items = 0
+    high_conf = 0
+    med_conf = 0
+    low_conf = 0
+    required_reviews = 0
+    optional_reviews = 0
     for group_key, prices in sorted(combined.items(), key=lambda item: item[1]["display_description"].lower()):
         vendor_prices = {
             "Sysco": prices["sysco"],
@@ -1135,6 +1153,8 @@ def build_comparison_rows(
         per_vendor_unit: Dict[str, Dict[str, Any]] = {}
         for vendor_name, vendor_key in [("Sysco", "sysco"), ("US Foods", "us_foods"), ("PFG", "pfg")]:
             case_price = prices[vendor_key]
+            if case_price is not None:
+                total_vendor_items += 1
             pack_size = str(prices.get(f"{vendor_key}_pack_size", "") or "")
             qty, unit_type, err = parse_pack_size_for_unit_price(pack_size)
             correction_key = f"{group_key}::{vendor_key}"
@@ -1153,6 +1173,13 @@ def build_comparison_rows(
                     except Exception:
                         pass
             converted_qty, converted_unit, conversion_err = convert_to_preferred_unit(qty, unit_type, preferred_comparison_unit)
+            confidence = determine_unit_parse_confidence(pack_size, qty, unit_type, err or conversion_err)
+            if confidence == "high":
+                high_conf += 1
+            elif confidence == "medium":
+                med_conf += 1
+            else:
+                low_conf += 1
             unit_price = None
             formula_used = ""
             if case_price is not None and converted_qty and converted_qty > 0:
@@ -1162,16 +1189,21 @@ def build_comparison_rows(
                 unit_price_errors.append(f"{prices['display_description']} [{vendor_name}]: {err}")
             per_vendor_unit[vendor_name] = {"unit_price": unit_price, "unit_type": converted_unit}
 
-            low_confidence = is_low_confidence_pack_size(pack_size, unit_type, err)
             suspicious_unit_price = unit_price is not None and (unit_price <= 0 or unit_price > 1000)
-            needs_review = (
-                (case_price is not None and unit_price is None)
+            required_review = (
+                (case_price is None)
                 or (not pack_size)
                 or bool(err)
+                or bool(conversion_err)
                 or suspicious_unit_price
-                or low_confidence
+                or confidence == "low"
             )
-            if needs_review:
+            optional_review = confidence == "medium"
+            if required_review:
+                required_reviews += 1
+            elif optional_review:
+                optional_reviews += 1
+            if required_review or optional_review:
                 unit_review_items.append(
                     {
                         "review_key": correction_key,
@@ -1185,10 +1217,12 @@ def build_comparison_rows(
                         "parsed_unit_type": unit_type,
                         "converted_quantity": converted_qty if converted_qty is not None else "",
                         "converted_unit_type": converted_unit,
-                        "calculated_unit_price": f"${unit_price:.2f}" if unit_price is not None else "Needs review",
+                        "calculated_unit_price": f"${unit_price:.2f} / {converted_unit}" if unit_price is not None and converted_unit else "Needs review",
                         "preferred_comparison_unit": preferred_comparison_unit,
                         "formula_used": formula_used if formula_used else "Needs review",
-                        "low_confidence": low_confidence,
+                        "confidence": confidence,
+                        "review_required": required_review,
+                        "review_optional": optional_review,
                         "note": correction.get("note", "") if isinstance(correction, dict) else "",
                     }
                 )
@@ -1247,6 +1281,12 @@ def build_comparison_rows(
         "unit_corrections_loaded_from_memory": len(unit_corrections),
         "unit_corrections_applied": unit_corrections_applied,
         "rows_still_needing_unit_review": len(unit_review_items),
+        "total_vendor_items": total_vendor_items,
+        "high_confidence_unit_parses": high_conf,
+        "medium_confidence_unit_parses": med_conf,
+        "low_confidence_unit_parses": low_conf,
+        "required_unit_reviews": required_reviews,
+        "optional_unit_reviews": optional_reviews,
     }
 
     us_items = [entry for entry in parsed_entries if entry["vendor"] == "US Foods"]
@@ -1381,6 +1421,7 @@ def index():
     mapping_options: Dict[str, Any] = {}
     show_mapping_form = False
     upload_id = ""
+    show_optional_unit_reviews = request.form.get("show_optional_unit_reviews", "") == "1" or request.args.get("show_optional_unit_reviews", "") == "1"
     upload_debug: Dict[str, Any] = {
         "request_method": request.method,
         "files_keys": [],
@@ -1885,6 +1926,10 @@ def index():
             review_error_messages.append(f"Failure at step '{failed_step}': {type(exc).__name__} - {exc}")
             print(f"Failure at step '{failed_step}': {type(exc).__name__}: {exc}")
 
+    filtered_unit_review_items = [
+        item for item in unit_review_items if item.get("review_required") or show_optional_unit_reviews
+    ]
+
     return render_template(
         "index.html",
         rows=comparison_rows,
@@ -1905,7 +1950,8 @@ def index():
         match_matrix_stats=match_matrix_stats,
         review_batch_debug=review_batch_debug,
         export_warning=str(session.get("export_warning", "")),
-        unit_review_items=unit_review_items,
+        unit_review_items=filtered_unit_review_items,
+        show_optional_unit_reviews=show_optional_unit_reviews,
     )
 
 
