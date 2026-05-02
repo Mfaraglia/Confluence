@@ -395,6 +395,19 @@ def parse_pack_size_for_unit_price(pack_size_text: str) -> Tuple[Optional[float]
     return None, "", f"unsupported pack size format: {pack_size_text}"
 
 
+def is_low_confidence_pack_size(pack_size_text: str, unit_type: str, parse_error: str) -> bool:
+    text = (pack_size_text or "").strip().lower()
+    if not text:
+        return True
+    if parse_error:
+        return True
+    # Simple rule-based confidence: valid parse, but unknown unit is still low confidence.
+    known_units = {"ct", "each", "lb", "oz", "gal"}
+    if unit_type not in known_units:
+        return True
+    return False
+
+
 # Build a simple cleaned description for matching similar products across files.
 # Rules:
 # 1) lowercase + trim
@@ -1076,6 +1089,7 @@ def build_comparison_rows(
     unit_review_items: List[Dict[str, Any]] = []
     unit_price_errors: List[str] = []
     unit_corrections = match_memory.get("unit_corrections", {})
+    unit_corrections_applied = 0
     for group_key, prices in sorted(combined.items(), key=lambda item: item[1]["display_description"].lower()):
         vendor_prices = {
             "Sysco": prices["sysco"],
@@ -1100,6 +1114,7 @@ def build_comparison_rows(
                         qty = float(corrected_qty)
                         unit_type = str(corrected_unit_type).strip().lower()
                         err = ""
+                        unit_corrections_applied += 1
                     except Exception:
                         pass
             unit_price = None
@@ -1109,11 +1124,14 @@ def build_comparison_rows(
                 unit_price_errors.append(f"{prices['display_description']} [{vendor_name}]: {err}")
             per_vendor_unit[vendor_name] = {"unit_price": unit_price, "unit_type": unit_type}
 
+            low_confidence = is_low_confidence_pack_size(pack_size, unit_type, err)
+            suspicious_unit_price = unit_price is not None and (unit_price <= 0 or unit_price > 1000)
             needs_review = (
                 (case_price is not None and unit_price is None)
                 or (not pack_size)
                 or bool(err)
-                or (unit_price is not None and unit_price <= 0)
+                or suspicious_unit_price
+                or low_confidence
             )
             if needs_review:
                 unit_review_items.append(
@@ -1128,6 +1146,7 @@ def build_comparison_rows(
                         "parsed_quantity": qty if qty is not None else "",
                         "parsed_unit_type": unit_type,
                         "calculated_unit_price": f"${unit_price:.2f}" if unit_price is not None else "Needs review",
+                        "low_confidence": low_confidence,
                         "note": correction.get("note", "") if isinstance(correction, dict) else "",
                     }
                 )
@@ -1142,7 +1161,7 @@ def build_comparison_rows(
         else:
             unit_types = {str(data["unit_type"]) for data in valid_units.values()}
             if len(unit_types) != 1:
-                cheapest_by_unit = "Unit mismatch"
+                cheapest_by_unit = "Unit mismatch — review needed"
             else:
                 cheapest_by_unit = min(valid_units, key=lambda v: float(valid_units[v]["unit_price"]))
         output.append(
@@ -1184,6 +1203,7 @@ def build_comparison_rows(
         "grouped_rows_before_unit_price": len(combined),
         "unit_price_calculation_errors": unit_price_errors[:20],
         "unit_corrections_loaded_from_memory": len(unit_corrections),
+        "unit_corrections_applied": unit_corrections_applied,
         "rows_still_needing_unit_review": len(unit_review_items),
     }
 
@@ -1341,6 +1361,7 @@ def index():
         "rejected_matches_in_session": 0,
         "confirmed_matches_in_export": 0,
         "rejected_matches_in_export": 0,
+        "unit_corrections_saved": 0,
     }
 
     if request.method == "POST":
@@ -1717,6 +1738,7 @@ def index():
                                 continue
                     match_memory["unit_corrections"] = unit_corrections
                     save_match_memory(match_memory)
+                    debug_counters["unit_corrections_saved"] = saved_corrections
                     SESSION_REVIEW_MEMORY[session_id] = {
                         "confirmed": dict(match_memory.get("confirmed", {})),
                         "rejected": set(match_memory.get("rejected", set())),

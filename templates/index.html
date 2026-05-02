@@ -420,6 +420,8 @@
           </ul>
         {% endif %}
         <p><strong>Unit corrections loaded from memory:</strong> {{ review_stats.unit_corrections_loaded_from_memory if review_stats else 0 }}</p>
+        <p><strong>Unit corrections applied:</strong> {{ review_stats.unit_corrections_applied if review_stats else 0 }}</p>
+        <p><strong>Unit corrections saved (last submit):</strong> {{ debug_counters.unit_corrections_saved if debug_counters.unit_corrections_saved is not none else 0 }}</p>
         <p><strong>Rows still needing unit review:</strong> {{ review_stats.rows_still_needing_unit_review if review_stats else 0 }}</p>
       </section>
     {% endif %}
@@ -660,6 +662,7 @@
               <p>Parsed quantity: {{ item.parsed_quantity if item.parsed_quantity != "" else "N/A" }}</p>
               <p>Parsed unit type: {{ item.parsed_unit_type if item.parsed_unit_type else "N/A" }}</p>
               <p>Calculated unit price: {{ item.calculated_unit_price }}</p>
+              <p>Low-confidence parse: {{ "Yes" if item.low_confidence else "No" }}</p>
 
               <input type="hidden" name="unit_review_key_{{ loop.index0 }}" value="{{ item.review_key }}">
               <label for="unit_quantity_{{ loop.index0 }}">Total unit quantity</label>
