@@ -105,6 +105,7 @@ You upload CSV files from Sysco, US Foods, and PFG, and the app builds one compa
 - Review memory is saved locally in `match_memory.json`:
   - confirmed pairs are remembered and auto-grouped next time
   - rejected pairs are remembered and not suggested again
+  - unit_corrections section is also supported for future unit-price review memory
   - for active-session reliability, confirmed/rejected decisions are also mirrored in server-side session memory
   - match memory can now be exported and imported from the UI to back up or restore confirmed/rejected decisions
   - on read-only hosting (for example Vercel), imported memory is kept in session memory so it can be applied immediately without writing project files

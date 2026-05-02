@@ -33,6 +33,7 @@ def load_match_memory() -> Dict[str, Any]:
             memory = {
                 "confirmed": data.get("confirmed", {}),
                 "rejected": set(data.get("rejected", [])),
+                "unit_corrections": data.get("unit_corrections", {}),
             }
             STARTUP_MATCH_MEMORY_STATUS["loaded"] = True
             STARTUP_MATCH_MEMORY_STATUS["confirmed"] = len(memory["confirmed"])
@@ -42,7 +43,7 @@ def load_match_memory() -> Dict[str, Any]:
         STARTUP_MATCH_MEMORY_STATUS["loaded"] = False
         STARTUP_MATCH_MEMORY_STATUS["confirmed"] = 0
         STARTUP_MATCH_MEMORY_STATUS["rejected"] = 0
-        return {"confirmed": {}, "rejected": set()}
+        return {"confirmed": {}, "rejected": set(), "unit_corrections": {}}
 
 
 def save_match_memory(memory: Dict[str, Any]) -> None:
@@ -54,6 +55,7 @@ def save_match_memory(memory: Dict[str, Any]) -> None:
             {
                 "confirmed": memory.get("confirmed", {}),
                 "rejected": sorted(list(memory.get("rejected", set()))),
+                "unit_corrections": memory.get("unit_corrections", {}),
             },
             f,
             indent=2,
@@ -70,10 +72,14 @@ def get_effective_match_memory() -> Dict[str, Any]:
     if isinstance(fallback_memory, dict):
         memory["confirmed"].update(fallback_memory.get("confirmed", {}))
         memory["rejected"].update(set(fallback_memory.get("rejected", [])))
+        memory["unit_corrections"].update(fallback_memory.get("unit_corrections", {}))
     session_id = get_session_id()
-    session_memory = SESSION_REVIEW_MEMORY.get(session_id, {"confirmed": {}, "rejected": set()})
+    session_memory = SESSION_REVIEW_MEMORY.get(
+        session_id, {"confirmed": {}, "rejected": set(), "unit_corrections": {}}
+    )
     memory["confirmed"].update(session_memory.get("confirmed", {}))
     memory["rejected"].update(set(session_memory.get("rejected", set())))
+    memory["unit_corrections"].update(session_memory.get("unit_corrections", {}))
     return memory
 
 
@@ -1308,13 +1314,17 @@ def index():
             )
 
             session_id = get_session_id()
-            session_memory = SESSION_REVIEW_MEMORY.get(session_id, {"confirmed": {}, "rejected": set()})
+            session_memory = SESSION_REVIEW_MEMORY.get(
+                session_id, {"confirmed": {}, "rejected": set(), "unit_corrections": {}}
+            )
             match_memory["confirmed"].update(session_memory.get("confirmed", {}))
             match_memory["rejected"].update(set(session_memory.get("rejected", set())))
+            match_memory["unit_corrections"].update(session_memory.get("unit_corrections", {}))
             fallback_memory = session.get("match_memory_fallback", {})
             if isinstance(fallback_memory, dict):
                 match_memory["confirmed"].update(fallback_memory.get("confirmed", {}))
                 match_memory["rejected"].update(set(fallback_memory.get("rejected", [])))
+                match_memory["unit_corrections"].update(fallback_memory.get("unit_corrections", {}))
             debug_counters["confirmed_matches_in_session"] = len(match_memory.get("confirmed", {}))
             debug_counters["rejected_matches_in_session"] = len(match_memory.get("rejected", set()))
             last_export_counts = session.get("last_export_counts", {})
@@ -1439,10 +1449,12 @@ def index():
                     SESSION_REVIEW_MEMORY[session_id] = {
                         "confirmed": dict(match_memory.get("confirmed", {})),
                         "rejected": set(match_memory.get("rejected", set())),
+                        "unit_corrections": dict(match_memory.get("unit_corrections", {})),
                     }
                     session["match_memory_fallback"] = {
                         "confirmed": match_memory.get("confirmed", {}),
                         "rejected": sorted(list(match_memory.get("rejected", set()))),
+                        "unit_corrections": match_memory.get("unit_corrections", {}),
                     }
 
                     message = f"{debug_prefix}, save_status={save_status}, stored_in={storage_location}"
@@ -1521,10 +1533,12 @@ def index():
                     SESSION_REVIEW_MEMORY[session_id] = {
                         "confirmed": dict(match_memory.get("confirmed", {})),
                         "rejected": set(match_memory.get("rejected", set())),
+                        "unit_corrections": dict(match_memory.get("unit_corrections", {})),
                     }
                     session["match_memory_fallback"] = {
                         "confirmed": match_memory.get("confirmed", {}),
                         "rejected": sorted(list(match_memory.get("rejected", set()))),
+                        "unit_corrections": match_memory.get("unit_corrections", {}),
                     }
                     _, forced_group_debug = build_forced_group_assignments(match_memory)
                     review_success_messages.append(
@@ -1580,20 +1594,26 @@ def index():
                         imported_data = json.load(import_file.stream)
                         confirmed = imported_data.get("confirmed", {})
                         rejected = imported_data.get("rejected", [])
+                        unit_corrections = imported_data.get("unit_corrections", {})
                         if not isinstance(confirmed, dict) or not isinstance(rejected, list):
                             raise ValueError("Invalid match memory format. Expected confirmed object and rejected list.")
+                        if not isinstance(unit_corrections, dict):
+                            raise ValueError("Invalid match memory format. Expected unit_corrections object.")
                         match_memory["confirmed"] = dict(confirmed)
                         match_memory["rejected"] = set(rejected)
+                        match_memory["unit_corrections"] = dict(unit_corrections)
                         # Do not write to project filesystem on read-only platforms (for example Vercel).
                         # Keep imported memory in session for immediate use in this browser session.
                         # Keep session memory in sync so confirmed pairs apply immediately.
                         SESSION_REVIEW_MEMORY[session_id] = {
                             "confirmed": dict(match_memory.get("confirmed", {})),
                             "rejected": set(match_memory.get("rejected", set())),
+                            "unit_corrections": dict(match_memory.get("unit_corrections", {})),
                         }
                         session["match_memory_fallback"] = {
                             "confirmed": match_memory.get("confirmed", {}),
                             "rejected": sorted(list(match_memory.get("rejected", set()))),
+                            "unit_corrections": match_memory.get("unit_corrections", {}),
                         }
                         # Update startup-like debug state after successful import.
                         STARTUP_MATCH_MEMORY_STATUS["loaded"] = True
@@ -1703,6 +1723,7 @@ def export_match_memory():
     payload = {
         "confirmed": memory.get("confirmed", {}),
         "rejected": sorted(list(memory.get("rejected", set()))),
+        "unit_corrections": memory.get("unit_corrections", {}),
     }
     return Response(
         json.dumps(payload, indent=2),
