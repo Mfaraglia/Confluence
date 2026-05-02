@@ -1421,7 +1421,12 @@ def index():
     mapping_options: Dict[str, Any] = {}
     show_mapping_form = False
     upload_id = ""
-    show_optional_unit_reviews = request.form.get("show_optional_unit_reviews", "") == "1" or request.args.get("show_optional_unit_reviews", "") == "1"
+    show_optional_unit_reviews = False
+    if request.method == "POST":
+        show_optional_unit_reviews = request.form.get("show_optional_unit_reviews", "") == "1"
+        session["show_optional_unit_reviews"] = show_optional_unit_reviews
+    else:
+        show_optional_unit_reviews = bool(session.get("show_optional_unit_reviews", False))
     upload_debug: Dict[str, Any] = {
         "request_method": request.method,
         "files_keys": [],
@@ -1929,6 +1934,7 @@ def index():
     filtered_unit_review_items = [
         item for item in unit_review_items if item.get("review_required") or show_optional_unit_reviews
     ]
+    debug_counters["displayed_unit_review_cards"] = len(filtered_unit_review_items)
 
     return render_template(
         "index.html",

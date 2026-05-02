@@ -359,6 +359,19 @@
       </div>
     {% endif %}
 
+    {% if review_stats %}
+      <section class="debug" aria-label="Unit review summary">
+        <h2>Unit Review Summary</h2>
+        <p><strong>Total vendor items:</strong> {{ review_stats.total_vendor_items if review_stats else 0 }}</p>
+        <p><strong>High-confidence unit parses:</strong> {{ review_stats.high_confidence_unit_parses if review_stats else 0 }}</p>
+        <p><strong>Medium-confidence unit parses:</strong> {{ review_stats.medium_confidence_unit_parses if review_stats else 0 }}</p>
+        <p><strong>Low-confidence unit parses:</strong> {{ review_stats.low_confidence_unit_parses if review_stats else 0 }}</p>
+        <p><strong>Required unit reviews:</strong> {{ review_stats.required_unit_reviews if review_stats else 0 }}</p>
+        <p><strong>Optional unit reviews:</strong> {{ review_stats.optional_unit_reviews if review_stats else 0 }}</p>
+        <p><strong>Displayed unit review cards:</strong> {{ debug_counters.displayed_unit_review_cards if debug_counters.displayed_unit_review_cards is not none else 0 }}</p>
+      </section>
+    {% endif %}
+
     {% if review_batch_debug %}
       <section class="debug" aria-label="Batch review submission debug">
         <h2>Batch Review Submission Debug</h2>
@@ -664,9 +677,10 @@
       </section>
     {% endif %}
 
-    {% if unit_review_items %}
+    {% if review_stats and (review_stats.required_unit_reviews or review_stats.optional_unit_reviews) %}
       <section class="debug" aria-label="Unit price review">
         <h2>Unit Price Review</h2>
+        <p><strong>Showing {{ review_stats.required_unit_reviews if review_stats else 0 }} required unit reviews. {{ (review_stats.optional_unit_reviews if review_stats else 0) if not show_optional_unit_reviews else 0 }} optional reviews hidden.</strong></p>
         <p class="muted">Correct quantity/unit details for rows where unit pricing needs review. This does not change matching or grouping.</p>
         <form method="POST">
           <input type="hidden" name="action" value="submit_unit_corrections">
@@ -700,6 +714,9 @@
               <input id="unit_note_{{ loop.index0 }}" name="unit_note_{{ loop.index0 }}" type="text" value="{{ item.note }}" style="width:100%;">
             </div>
           {% endfor %}
+          {% if not unit_review_items %}
+            <p class="muted">No unit review cards are currently displayed with this filter.</p>
+          {% endif %}
           <button type="submit">Submit Unit Price Corrections</button>
         </form>
       </section>
