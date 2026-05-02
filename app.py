@@ -367,6 +367,12 @@ def parse_pack_size_for_unit_price(pack_size_text: str) -> Tuple[Optional[float]
         "lbs": "lb",
         "gal": "gal",
         "gallon": "gal",
+        "qt": "qt",
+        "quart": "qt",
+        "pt": "pt",
+        "pint": "pt",
+        "floz": "fl oz",
+        "fl": "fl oz",
         "oz": "oz",
         "dozen": "dozen",
         "dz": "dozen",
@@ -395,6 +401,33 @@ def parse_pack_size_for_unit_price(pack_size_text: str) -> Tuple[Optional[float]
     return None, "", f"unsupported pack size format: {pack_size_text}"
 
 
+def normalize_count_unit(unit: str) -> str:
+    return "each" if unit in {"ct", "count", "ea", "each"} else unit
+
+
+def convert_to_preferred_unit(total_quantity: Optional[float], unit_type: str, preferred_unit: str = "") -> Tuple[Optional[float], str, str]:
+    if total_quantity is None or total_quantity <= 0:
+        return None, "", "missing quantity"
+    unit = normalize_count_unit((unit_type or "").strip().lower())
+    requested = (preferred_unit or "").strip().lower()
+    weight_units = {"lb", "oz"}
+    liquid_units = {"gal", "qt", "pt", "fl oz"}
+    count_units = {"each"}
+
+    if unit in weight_units:
+        target = requested if requested in {"lb", "oz"} else "oz"
+        converted = total_quantity * 16.0 if unit == "lb" and target == "oz" else total_quantity / 16.0 if unit == "oz" and target == "lb" else total_quantity
+        return converted, target, ""
+    if unit in liquid_units:
+        to_fl_oz = {"gal": 128.0, "qt": 32.0, "pt": 16.0, "fl oz": 1.0}
+        base_fl_oz = total_quantity * to_fl_oz[unit]
+        target = requested if requested == "fl oz" else "fl oz"
+        return base_fl_oz, target, ""
+    if unit in count_units:
+        return total_quantity, "each", ""
+    return None, "", f"unsupported unit type: {unit_type}"
+
+
 def is_low_confidence_pack_size(pack_size_text: str, unit_type: str, parse_error: str) -> bool:
     text = (pack_size_text or "").strip().lower()
     if not text:
@@ -402,7 +435,7 @@ def is_low_confidence_pack_size(pack_size_text: str, unit_type: str, parse_error
     if parse_error:
         return True
     # Simple rule-based confidence: valid parse, but unknown unit is still low confidence.
-    known_units = {"ct", "each", "lb", "oz", "gal"}
+    known_units = {"ct", "count", "each", "lb", "oz", "gal", "qt", "pt", "fl oz"}
     if unit_type not in known_units:
         return True
     return False
@@ -1106,9 +1139,11 @@ def build_comparison_rows(
             qty, unit_type, err = parse_pack_size_for_unit_price(pack_size)
             correction_key = f"{group_key}::{vendor_key}"
             correction = unit_corrections.get(correction_key, {})
+            preferred_comparison_unit = ""
             if isinstance(correction, dict):
                 corrected_qty = correction.get("total_unit_quantity")
                 corrected_unit_type = correction.get("unit_type")
+                preferred_comparison_unit = str(correction.get("preferred_comparison_unit", "")).strip().lower()
                 if corrected_qty not in [None, ""] and corrected_unit_type:
                     try:
                         qty = float(corrected_qty)
@@ -1117,12 +1152,15 @@ def build_comparison_rows(
                         unit_corrections_applied += 1
                     except Exception:
                         pass
+            converted_qty, converted_unit, conversion_err = convert_to_preferred_unit(qty, unit_type, preferred_comparison_unit)
             unit_price = None
-            if case_price is not None and qty and qty > 0:
-                unit_price = float(case_price) / float(qty)
-            elif case_price is not None and err:
+            formula_used = ""
+            if case_price is not None and converted_qty and converted_qty > 0:
+                unit_price = float(case_price) / float(converted_qty)
+                formula_used = f"{case_price} / {converted_qty} {converted_unit}"
+            elif case_price is not None and (err or conversion_err):
                 unit_price_errors.append(f"{prices['display_description']} [{vendor_name}]: {err}")
-            per_vendor_unit[vendor_name] = {"unit_price": unit_price, "unit_type": unit_type}
+            per_vendor_unit[vendor_name] = {"unit_price": unit_price, "unit_type": converted_unit}
 
             low_confidence = is_low_confidence_pack_size(pack_size, unit_type, err)
             suspicious_unit_price = unit_price is not None and (unit_price <= 0 or unit_price > 1000)
@@ -1145,7 +1183,11 @@ def build_comparison_rows(
                         "pack_size_text": pack_size,
                         "parsed_quantity": qty if qty is not None else "",
                         "parsed_unit_type": unit_type,
+                        "converted_quantity": converted_qty if converted_qty is not None else "",
+                        "converted_unit_type": converted_unit,
                         "calculated_unit_price": f"${unit_price:.2f}" if unit_price is not None else "Needs review",
+                        "preferred_comparison_unit": preferred_comparison_unit,
+                        "formula_used": formula_used if formula_used else "Needs review",
                         "low_confidence": low_confidence,
                         "note": correction.get("note", "") if isinstance(correction, dict) else "",
                     }
@@ -1723,6 +1765,7 @@ def index():
                         review_key = request.form.get(f"unit_review_key_{i}", "")
                         qty_text = request.form.get(f"unit_quantity_{i}", "").strip()
                         unit_type = request.form.get(f"unit_type_{i}", "").strip().lower()
+                        preferred_comparison_unit = request.form.get(f"preferred_unit_{i}", "").strip().lower()
                         note = request.form.get(f"unit_note_{i}", "").strip()
                         if review_key and qty_text and unit_type:
                             try:
@@ -1731,6 +1774,7 @@ def index():
                                     unit_corrections[review_key] = {
                                         "total_unit_quantity": qty_value,
                                         "unit_type": unit_type,
+                                        "preferred_comparison_unit": preferred_comparison_unit,
                                         "note": note,
                                     }
                                     saved_corrections += 1

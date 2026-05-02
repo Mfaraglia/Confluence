@@ -661,7 +661,10 @@
               <p>Pack size text: {{ item.pack_size_text if item.pack_size_text else "N/A" }}</p>
               <p>Parsed quantity: {{ item.parsed_quantity if item.parsed_quantity != "" else "N/A" }}</p>
               <p>Parsed unit type: {{ item.parsed_unit_type if item.parsed_unit_type else "N/A" }}</p>
+              <p>Converted quantity: {{ item.converted_quantity if item.converted_quantity != "" else "N/A" }}</p>
+              <p>Converted unit type: {{ item.converted_unit_type if item.converted_unit_type else "N/A" }}</p>
               <p>Calculated unit price: {{ item.calculated_unit_price }}</p>
+              <p>Unit price formula: {{ item.formula_used }}</p>
               <p>Low-confidence parse: {{ "Yes" if item.low_confidence else "No" }}</p>
 
               <input type="hidden" name="unit_review_key_{{ loop.index0 }}" value="{{ item.review_key }}">
@@ -669,6 +672,8 @@
               <input id="unit_quantity_{{ loop.index0 }}" name="unit_quantity_{{ loop.index0 }}" type="text" value="{{ item.parsed_quantity }}" style="width:100%; margin-bottom:6px;">
               <label for="unit_type_{{ loop.index0 }}">Unit type (ct, lb, oz, gal, each)</label>
               <input id="unit_type_{{ loop.index0 }}" name="unit_type_{{ loop.index0 }}" type="text" value="{{ item.parsed_unit_type }}" style="width:100%; margin-bottom:6px;">
+              <label for="preferred_unit_{{ loop.index0 }}">Preferred comparison unit (oz, fl oz, each)</label>
+              <input id="preferred_unit_{{ loop.index0 }}" name="preferred_unit_{{ loop.index0 }}" type="text" value="{{ item.preferred_comparison_unit }}" style="width:100%; margin-bottom:6px;">
               <label for="unit_note_{{ loop.index0 }}">Note (optional)</label>
               <input id="unit_note_{{ loop.index0 }}" name="unit_note_{{ loop.index0 }}" type="text" value="{{ item.note }}" style="width:100%;">
             </div>
