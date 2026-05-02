@@ -852,6 +852,7 @@ def build_comparison_rows(
     Dict[str, Any],
     Dict[str, Any],
     Dict[str, int],
+    List[Dict[str, Any]],
 ]:
     combined: Dict[str, Dict[str, Any]] = {}
     match_debug_rows: List[Dict[str, str]] = []
@@ -1072,8 +1073,10 @@ def build_comparison_rows(
                 combined[final_group_key]["pfg_pack_size"] = pack_size_text
 
     output: List[Dict[str, str]] = []
+    unit_review_items: List[Dict[str, Any]] = []
     unit_price_errors: List[str] = []
-    for _, prices in sorted(combined.items(), key=lambda item: item[1]["display_description"].lower()):
+    unit_corrections = match_memory.get("unit_corrections", {})
+    for group_key, prices in sorted(combined.items(), key=lambda item: item[1]["display_description"].lower()):
         vendor_prices = {
             "Sysco": prices["sysco"],
             "US Foods": prices["us_foods"],
@@ -1087,12 +1090,47 @@ def build_comparison_rows(
             case_price = prices[vendor_key]
             pack_size = str(prices.get(f"{vendor_key}_pack_size", "") or "")
             qty, unit_type, err = parse_pack_size_for_unit_price(pack_size)
+            correction_key = f"{group_key}::{vendor_key}"
+            correction = unit_corrections.get(correction_key, {})
+            if isinstance(correction, dict):
+                corrected_qty = correction.get("total_unit_quantity")
+                corrected_unit_type = correction.get("unit_type")
+                if corrected_qty not in [None, ""] and corrected_unit_type:
+                    try:
+                        qty = float(corrected_qty)
+                        unit_type = str(corrected_unit_type).strip().lower()
+                        err = ""
+                    except Exception:
+                        pass
             unit_price = None
             if case_price is not None and qty and qty > 0:
                 unit_price = float(case_price) / float(qty)
             elif case_price is not None and err:
                 unit_price_errors.append(f"{prices['display_description']} [{vendor_name}]: {err}")
             per_vendor_unit[vendor_name] = {"unit_price": unit_price, "unit_type": unit_type}
+
+            needs_review = (
+                (case_price is not None and unit_price is None)
+                or (not pack_size)
+                or bool(err)
+                or (unit_price is not None and unit_price <= 0)
+            )
+            if needs_review:
+                unit_review_items.append(
+                    {
+                        "review_key": correction_key,
+                        "vendor_name": vendor_name,
+                        "vendor_key": vendor_key,
+                        "group_key": group_key,
+                        "description": str(prices["display_description"]),
+                        "case_price": f"${case_price:.2f}" if case_price is not None else "",
+                        "pack_size_text": pack_size,
+                        "parsed_quantity": qty if qty is not None else "",
+                        "parsed_unit_type": unit_type,
+                        "calculated_unit_price": f"${unit_price:.2f}" if unit_price is not None else "Needs review",
+                        "note": correction.get("note", "") if isinstance(correction, dict) else "",
+                    }
+                )
 
         valid_units = {
             vendor: data
@@ -1130,6 +1168,7 @@ def build_comparison_rows(
                     else "Needs review"
                 ),
                 "cheapest_by_unit": cheapest_by_unit,
+                "row_group_key": group_key,
             }
         )
 
@@ -1144,6 +1183,8 @@ def build_comparison_rows(
         "matching_completed_before_unit_price": "yes",
         "grouped_rows_before_unit_price": len(combined),
         "unit_price_calculation_errors": unit_price_errors[:20],
+        "unit_corrections_loaded_from_memory": len(unit_corrections),
+        "rows_still_needing_unit_review": len(unit_review_items),
     }
 
     us_items = [entry for entry in parsed_entries if entry["vendor"] == "US Foods"]
@@ -1257,12 +1298,13 @@ def build_comparison_rows(
         "no_match_found": len(match_review_buckets["no_likely_match_found"]),
     }
 
-    return output, match_debug_rows, possible_matches, review_stats, match_review_buckets, match_matrix_stats
+    return output, match_debug_rows, possible_matches, review_stats, match_review_buckets, match_matrix_stats, unit_review_items
 
 
 @app.route("/", methods=["GET", "POST"])
 def index():
     comparison_rows: List[Dict[str, str]] = []
+    unit_review_items: List[Dict[str, Any]] = []
     match_debug_rows: List[Dict[str, str]] = []
     possible_matches: List[Dict[str, str]] = []
     review_stats: Dict[str, Any] = {}
@@ -1650,6 +1692,57 @@ def index():
                     debug_counters["rows_parsed_per_vendor"][vendor_name] += len(rows)
                     errors.extend(file_errors)
                     debug_details.append(debug_info)
+            elif action == "submit_unit_corrections":
+                failed_step = "review save"
+                saved_corrections = 0
+                try:
+                    total_items = int(request.form.get("total_unit_review_items", "0") or "0")
+                    unit_corrections = dict(match_memory.get("unit_corrections", {}))
+                    for i in range(total_items):
+                        review_key = request.form.get(f"unit_review_key_{i}", "")
+                        qty_text = request.form.get(f"unit_quantity_{i}", "").strip()
+                        unit_type = request.form.get(f"unit_type_{i}", "").strip().lower()
+                        note = request.form.get(f"unit_note_{i}", "").strip()
+                        if review_key and qty_text and unit_type:
+                            try:
+                                qty_value = float(qty_text)
+                                if qty_value > 0:
+                                    unit_corrections[review_key] = {
+                                        "total_unit_quantity": qty_value,
+                                        "unit_type": unit_type,
+                                        "note": note,
+                                    }
+                                    saved_corrections += 1
+                            except ValueError:
+                                continue
+                    match_memory["unit_corrections"] = unit_corrections
+                    save_match_memory(match_memory)
+                    SESSION_REVIEW_MEMORY[session_id] = {
+                        "confirmed": dict(match_memory.get("confirmed", {})),
+                        "rejected": set(match_memory.get("rejected", set())),
+                        "unit_corrections": dict(match_memory.get("unit_corrections", {})),
+                    }
+                    session["match_memory_fallback"] = {
+                        "confirmed": match_memory.get("confirmed", {}),
+                        "rejected": sorted(list(match_memory.get("rejected", set()))),
+                        "unit_corrections": match_memory.get("unit_corrections", {}),
+                    }
+                    review_success_messages.append(f"Unit corrections saved: {saved_corrections}.")
+                except Exception as exc:
+                    review_error_messages.append(f"Submit unit corrections failed: {exc}")
+
+                if not upload_id:
+                    upload_id = session.get("last_upload_id", "")
+                cached_vendor_files = UPLOAD_CACHE.get(upload_id, {})
+                for vendor_name, _, _ in vendor_keys:
+                    file_text = cached_vendor_files.get(vendor_name, "")
+                    if not file_text:
+                        continue
+                    rows, file_errors, debug_info = parse_vendor_text(vendor_name, file_text, None)
+                    all_vendor_rows.extend(rows)
+                    debug_counters["rows_parsed_per_vendor"][vendor_name] += len(rows)
+                    errors.extend(file_errors)
+                    debug_details.append(debug_info)
 
             if not all_vendor_rows and not errors and action == "upload":
                 errors.append("Please upload at least one CSV file.")
@@ -1657,7 +1750,7 @@ def index():
             if all_vendor_rows and not show_mapping_form:
                 failed_step = "review candidate generation"
                 try:
-                    comparison_rows, match_debug_rows, possible_matches, review_stats, match_review_buckets, match_matrix_stats = build_comparison_rows(
+                    comparison_rows, match_debug_rows, possible_matches, review_stats, match_review_buckets, match_matrix_stats, unit_review_items = build_comparison_rows(
                         all_vendor_rows, match_memory
                     )
                 except Exception as exc:
@@ -1670,6 +1763,7 @@ def index():
                     match_debug_rows = []
                     match_review_buckets = {}
                     match_matrix_stats = {}
+                    unit_review_items = []
 
                 debug_counters["rows_grouped"] = len(comparison_rows)
                 debug_counters["review_candidates_generated"] = len(possible_matches)
@@ -1710,6 +1804,7 @@ def index():
         match_matrix_stats=match_matrix_stats,
         review_batch_debug=review_batch_debug,
         export_warning=str(session.get("export_warning", "")),
+        unit_review_items=unit_review_items,
     )
 
 
@@ -1758,6 +1853,7 @@ def handle_internal_server_error(error):
         match_matrix_stats={},
         review_batch_debug={},
         export_warning="",
+        unit_review_items=[],
     ), 500
 
 

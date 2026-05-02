@@ -419,6 +419,8 @@
             {% endfor %}
           </ul>
         {% endif %}
+        <p><strong>Unit corrections loaded from memory:</strong> {{ review_stats.unit_corrections_loaded_from_memory if review_stats else 0 }}</p>
+        <p><strong>Rows still needing unit review:</strong> {{ review_stats.rows_still_needing_unit_review if review_stats else 0 }}</p>
       </section>
     {% endif %}
 
@@ -639,6 +641,37 @@
         {% else %}
           <p class="muted">No items currently require batch review.</p>
         {% endif %}
+      </section>
+    {% endif %}
+
+    {% if unit_review_items %}
+      <section class="debug" aria-label="Unit price review">
+        <h2>Unit Price Review</h2>
+        <p class="muted">Correct quantity/unit details for rows where unit pricing needs review. This does not change matching or grouping.</p>
+        <form method="POST">
+          <input type="hidden" name="action" value="submit_unit_corrections">
+          <input type="hidden" name="upload_id" value="{{ upload_id }}">
+          <input type="hidden" name="total_unit_review_items" value="{{ unit_review_items|length }}">
+          {% for item in unit_review_items %}
+            <div class="debug-card">
+              <p><strong>{{ item.vendor_name }}</strong> | {{ item.description }}</p>
+              <p>Case price: {{ item.case_price }}</p>
+              <p>Pack size text: {{ item.pack_size_text if item.pack_size_text else "N/A" }}</p>
+              <p>Parsed quantity: {{ item.parsed_quantity if item.parsed_quantity != "" else "N/A" }}</p>
+              <p>Parsed unit type: {{ item.parsed_unit_type if item.parsed_unit_type else "N/A" }}</p>
+              <p>Calculated unit price: {{ item.calculated_unit_price }}</p>
+
+              <input type="hidden" name="unit_review_key_{{ loop.index0 }}" value="{{ item.review_key }}">
+              <label for="unit_quantity_{{ loop.index0 }}">Total unit quantity</label>
+              <input id="unit_quantity_{{ loop.index0 }}" name="unit_quantity_{{ loop.index0 }}" type="text" value="{{ item.parsed_quantity }}" style="width:100%; margin-bottom:6px;">
+              <label for="unit_type_{{ loop.index0 }}">Unit type (ct, lb, oz, gal, each)</label>
+              <input id="unit_type_{{ loop.index0 }}" name="unit_type_{{ loop.index0 }}" type="text" value="{{ item.parsed_unit_type }}" style="width:100%; margin-bottom:6px;">
+              <label for="unit_note_{{ loop.index0 }}">Note (optional)</label>
+              <input id="unit_note_{{ loop.index0 }}" name="unit_note_{{ loop.index0 }}" type="text" value="{{ item.note }}" style="width:100%;">
+            </div>
+          {% endfor %}
+          <button type="submit">Submit Unit Price Corrections</button>
+        </form>
       </section>
     {% endif %}
 
