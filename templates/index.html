@@ -422,6 +422,18 @@
         <p><strong>Unit corrections loaded from memory:</strong> {{ review_stats.unit_corrections_loaded_from_memory if review_stats else 0 }}</p>
         <p><strong>Unit corrections applied:</strong> {{ review_stats.unit_corrections_applied if review_stats else 0 }}</p>
         <p><strong>Unit corrections saved (last submit):</strong> {{ debug_counters.unit_corrections_saved if debug_counters.unit_corrections_saved is not none else 0 }}</p>
+        <p><strong>Unit corrections received (last submit):</strong> {{ debug_counters.unit_corrections_received if debug_counters.unit_corrections_received is not none else 0 }}</p>
+        <p><strong>Unit corrections saved to session:</strong> {{ debug_counters.unit_corrections_saved_to_session if debug_counters.unit_corrections_saved_to_session is not none else 0 }}</p>
+        <p><strong>Unit corrections saved to memory export:</strong> {{ debug_counters.unit_corrections_in_export if debug_counters.unit_corrections_in_export is not none else 0 }}</p>
+        <p><strong>Submitted unit correction keys:</strong> {{ debug_counters.unit_correction_keys_submitted }}</p>
+        {% if debug_counters.unit_correction_validation_errors %}
+          <p><strong>Unit correction validation errors:</strong></p>
+          <ul class="debug-list">
+            {% for err in debug_counters.unit_correction_validation_errors %}
+              <li>{{ err }}</li>
+            {% endfor %}
+          </ul>
+        {% endif %}
         <p><strong>Rows still needing unit review:</strong> {{ review_stats.rows_still_needing_unit_review if review_stats else 0 }}</p>
       </section>
     {% endif %}
@@ -668,6 +680,8 @@
               <p>Low-confidence parse: {{ "Yes" if item.low_confidence else "No" }}</p>
 
               <input type="hidden" name="unit_review_key_{{ loop.index0 }}" value="{{ item.review_key }}">
+              <input type="hidden" name="unit_vendor_{{ loop.index0 }}" value="{{ item.vendor_name }}">
+              <input type="hidden" name="unit_description_{{ loop.index0 }}" value="{{ item.description }}">
               <label for="unit_quantity_{{ loop.index0 }}">Total unit quantity</label>
               <input id="unit_quantity_{{ loop.index0 }}" name="unit_quantity_{{ loop.index0 }}" type="text" value="{{ item.parsed_quantity }}" style="width:100%; margin-bottom:6px;">
               <label for="unit_type_{{ loop.index0 }}">Unit type (ct, lb, oz, gal, each)</label>

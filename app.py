@@ -1404,6 +1404,11 @@ def index():
         "confirmed_matches_in_export": 0,
         "rejected_matches_in_export": 0,
         "unit_corrections_saved": 0,
+        "unit_corrections_received": 0,
+        "unit_correction_keys_submitted": [],
+        "unit_corrections_saved_to_session": 0,
+        "unit_corrections_in_export": 0,
+        "unit_correction_validation_errors": [],
     }
 
     if request.method == "POST":
@@ -1425,6 +1430,8 @@ def index():
             match_memory["confirmed"].update(session_memory.get("confirmed", {}))
             match_memory["rejected"].update(set(session_memory.get("rejected", set())))
             match_memory["unit_corrections"].update(session_memory.get("unit_corrections", {}))
+            if isinstance(session.get("unit_corrections"), dict):
+                match_memory["unit_corrections"].update(session.get("unit_corrections", {}))
             fallback_memory = session.get("match_memory_fallback", {})
             if isinstance(fallback_memory, dict):
                 match_memory["confirmed"].update(fallback_memory.get("confirmed", {}))
@@ -1436,6 +1443,7 @@ def index():
             if isinstance(last_export_counts, dict):
                 debug_counters["confirmed_matches_in_export"] = int(last_export_counts.get("confirmed", 0))
                 debug_counters["rejected_matches_in_export"] = int(last_export_counts.get("rejected", 0))
+                debug_counters["unit_corrections_in_export"] = int(last_export_counts.get("unit_corrections", 0))
 
             failed_step = "file upload"
             upload_debug["files_keys"] = list(request.files.keys())
@@ -1761,28 +1769,53 @@ def index():
                 try:
                     total_items = int(request.form.get("total_unit_review_items", "0") or "0")
                     unit_corrections = dict(match_memory.get("unit_corrections", {}))
+                    validation_errors: List[str] = []
+                    submitted_keys: List[str] = []
+                    debug_counters["unit_corrections_received"] = total_items
                     for i in range(total_items):
-                        review_key = request.form.get(f"unit_review_key_{i}", "")
+                        review_key = request.form.get(f"unit_review_key_{i}", "").strip()
+                        vendor_name = request.form.get(f"unit_vendor_{i}", "").strip()
+                        description = request.form.get(f"unit_description_{i}", "").strip()
                         qty_text = request.form.get(f"unit_quantity_{i}", "").strip()
                         unit_type = request.form.get(f"unit_type_{i}", "").strip().lower()
                         preferred_comparison_unit = request.form.get(f"preferred_unit_{i}", "").strip().lower()
                         note = request.form.get(f"unit_note_{i}", "").strip()
-                        if review_key and qty_text and unit_type:
-                            try:
-                                qty_value = float(qty_text)
-                                if qty_value > 0:
-                                    unit_corrections[review_key] = {
-                                        "total_unit_quantity": qty_value,
-                                        "unit_type": unit_type,
-                                        "preferred_comparison_unit": preferred_comparison_unit,
-                                        "note": note,
-                                    }
-                                    saved_corrections += 1
-                            except ValueError:
+                        if not review_key:
+                            validation_errors.append(f"Row {i+1}: missing review key.")
+                            continue
+                        submitted_keys.append(review_key)
+                        if not qty_text:
+                            validation_errors.append(f"{vendor_name} {description}: total quantity is required.")
+                            continue
+                        try:
+                            qty_value = float(qty_text)
+                            if qty_value <= 0:
+                                validation_errors.append(f"{vendor_name} {description}: total quantity must be greater than 0.")
                                 continue
+                        except ValueError:
+                            validation_errors.append(f"{vendor_name} {description}: total quantity must be numeric.")
+                            continue
+                        valid_unit_types = {"ct", "count", "each", "ea", "lb", "oz", "gal", "qt", "pt", "fl oz"}
+                        if unit_type not in valid_unit_types:
+                            validation_errors.append(f"{vendor_name} {description}: unit type '{unit_type}' is not supported.")
+                            continue
+                        unit_corrections[review_key] = {
+                            "vendor": vendor_name,
+                            "product_description": description,
+                            "review_key": review_key,
+                            "total_unit_quantity": qty_value,
+                            "unit_type": unit_type,
+                            "preferred_comparison_unit": preferred_comparison_unit,
+                            "note": note,
+                        }
+                        saved_corrections += 1
                     match_memory["unit_corrections"] = unit_corrections
                     save_match_memory(match_memory)
                     debug_counters["unit_corrections_saved"] = saved_corrections
+                    debug_counters["unit_correction_keys_submitted"] = submitted_keys[:25]
+                    debug_counters["unit_correction_validation_errors"] = validation_errors[:25]
+                    session["unit_corrections"] = dict(unit_corrections)
+                    debug_counters["unit_corrections_saved_to_session"] = len(session.get("unit_corrections", {}))
                     SESSION_REVIEW_MEMORY[session_id] = {
                         "confirmed": dict(match_memory.get("confirmed", {})),
                         "rejected": set(match_memory.get("rejected", set())),
@@ -1793,7 +1826,9 @@ def index():
                         "rejected": sorted(list(match_memory.get("rejected", set()))),
                         "unit_corrections": match_memory.get("unit_corrections", {}),
                     }
-                    review_success_messages.append(f"Unit corrections saved: {saved_corrections}.")
+                    review_success_messages.append(f"{saved_corrections} unit price corrections saved and applied.")
+                    if validation_errors:
+                        review_error_messages.append("Some corrections were not saved. Please review the validation errors.")
                 except Exception as exc:
                     review_error_messages.append(f"Submit unit corrections failed: {exc}")
 
@@ -1880,6 +1915,7 @@ def export_match_memory():
     confirmed_count = len(memory.get("confirmed", {}))
     rejected_count = len(memory.get("rejected", set()))
     session["last_export_counts"] = {"confirmed": confirmed_count, "rejected": rejected_count}
+    session["last_export_counts"]["unit_corrections"] = len(memory.get("unit_corrections", {}))
     session["export_warning"] = "No confirmed matches are currently saved." if confirmed_count == 0 else ""
     payload = {
         "confirmed": memory.get("confirmed", {}),
