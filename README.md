@@ -128,6 +128,8 @@ You upload CSV files from Sysco, US Foods, and PFG, and the app builds one compa
   - adds Sysco / US Foods / PFG unit-price columns and Cheapest by Unit
   - does not change matching, grouping keys, review decisions, or forced-group behavior
   - includes a Unit Price Review form for correcting unit quantity/type; corrections are stored separately in `unit_corrections`
+  - optional AI fallback can assist only when rule-based unit parsing is uncertain (requires `OPENAI_API_KEY`)
+  - user corrections always win over AI suggestions
 - It now safely handles messy rows where a full CSV line gets stuck in one column.
   In that case, it manually splits into:
   `description, item_number, pack_size, price`.

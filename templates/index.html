@@ -368,6 +368,7 @@
         <p><strong>Low-confidence unit parses:</strong> {{ review_stats.low_confidence_unit_parses if review_stats else 0 }}</p>
         <p><strong>Required unit reviews:</strong> {{ review_stats.required_unit_reviews if review_stats else 0 }}</p>
         <p><strong>Optional unit reviews:</strong> {{ review_stats.optional_unit_reviews if review_stats else 0 }}</p>
+        <p><strong>AI fallback used:</strong> {{ review_stats.ai_fallback_used if review_stats else 0 }}</p>
         <p><strong>Displayed unit review cards:</strong> {{ debug_counters.displayed_unit_review_cards if debug_counters.displayed_unit_review_cards is not none else 0 }}</p>
       </section>
     {% endif %}
@@ -700,6 +701,11 @@
               <p>Unit price formula: {{ item.formula_used }}</p>
               <p>Confidence: {{ item.confidence }}</p>
               <p>Review type: {{ "Required" if item.review_required else "Optional" }}</p>
+              <p>Rule parser handled: {{ "yes" if item.rule_parser_handled else "no" }}</p>
+              <p>AI fallback used: {{ "yes" if item.ai_fallback_used else "no" }}</p>
+              <p>AI confidence: {{ item.ai_confidence }}</p>
+              <p>AI reason: {{ item.ai_reason }}</p>
+              <p>Final unit source: {{ item.unit_calculation_source }}</p>
 
               <input type="hidden" name="unit_review_key_{{ loop.index0 }}" value="{{ item.review_key }}">
               <input type="hidden" name="unit_vendor_{{ loop.index0 }}" value="{{ item.vendor_name }}">

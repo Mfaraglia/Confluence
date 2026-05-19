@@ -453,6 +453,44 @@ def determine_unit_parse_confidence(pack_size_text: str, parsed_qty: Optional[fl
     return "low"
 
 
+def ai_unit_reasoning(vendor_name: str, description: str, pack_size_text: str, case_price: Optional[float]) -> Dict[str, Any]:
+    """Optional AI fallback used only for uncertain unit parsing."""
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        return {"used": False, "confidence": "low", "reason": "OPENAI_API_KEY not set"}
+    prompt = (
+        "Return JSON only for this schema: "
+        '{"total_quantity": number, "original_unit_type": "lb|oz|ct|each|gal|qt|pt|fl_oz|dozen|unknown", '
+        '"preferred_comparison_unit": "oz|fl_oz|each|lb|unknown", "converted_quantity": number, '
+        '"unit_price": number, "confidence": "high|medium|low", "reason": "short explanation"}\n'
+        f"vendor={vendor_name}\nproduct_description={description}\npack_size_text={pack_size_text}\ncase_price={case_price}\n"
+    )
+    payload = {
+        "model": "gpt-4o-mini",
+        "temperature": 0,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": "You produce strict JSON only."},
+            {"role": "user", "content": prompt},
+        ],
+    }
+    request_data = urllib.request.Request(
+        "https://api.openai.com/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request_data, timeout=12) as response:
+            response_payload = json.loads(response.read().decode("utf-8"))
+        content = response_payload.get("choices", [{}])[0].get("message", {}).get("content", "{}")
+        parsed = json.loads(content)
+        parsed["used"] = True
+        return parsed
+    except Exception as exc:
+        return {"used": False, "confidence": "low", "reason": f"AI fallback failed: {exc}"}
+
+
 # Build a simple cleaned description for matching similar products across files.
 # Rules:
 # 1) lowercase + trim
@@ -1141,6 +1179,7 @@ def build_comparison_rows(
     low_conf = 0
     required_reviews = 0
     optional_reviews = 0
+    ai_fallback_used = 0
     for group_key, prices in sorted(combined.items(), key=lambda item: item[1]["display_description"].lower()):
         vendor_prices = {
             "Sysco": prices["sysco"],
@@ -1160,6 +1199,11 @@ def build_comparison_rows(
             correction_key = f"{group_key}::{vendor_key}"
             correction = unit_corrections.get(correction_key, {})
             preferred_comparison_unit = ""
+            rule_parser_handled = bool(qty is not None and not err and unit_type)
+            ai_used = False
+            ai_confidence = ""
+            ai_reason = ""
+            final_source = "rule"
             if isinstance(correction, dict):
                 corrected_qty = correction.get("total_unit_quantity")
                 corrected_unit_type = correction.get("unit_type")
@@ -1170,10 +1214,41 @@ def build_comparison_rows(
                         unit_type = str(corrected_unit_type).strip().lower()
                         err = ""
                         unit_corrections_applied += 1
+                        final_source = "user correction"
                     except Exception:
                         pass
+            # AI fallback is only used when rule parsing is uncertain and user correction does not exist.
+            if final_source != "user correction":
+                converted_probe, converted_unit_probe, conversion_probe_err = convert_to_preferred_unit(qty, unit_type, preferred_comparison_unit)
+                suspicious_probe = (
+                    case_price is not None and converted_probe is not None and converted_probe > 0 and
+                    ((float(case_price) / float(converted_probe)) <= 0 or (float(case_price) / float(converted_probe)) > 1000)
+                )
+                ai_needed = (not rule_parser_handled) or bool(conversion_probe_err) or suspicious_probe or not unit_type
+                if ai_needed:
+                    ai_result = ai_unit_reasoning(vendor_name, str(prices["display_description"]), pack_size, case_price)
+                    ai_used = bool(ai_result.get("used"))
+                    ai_reason = str(ai_result.get("reason", ""))
+                    ai_confidence = str(ai_result.get("confidence", "low")).strip().lower()
+                    if ai_used and ai_confidence in {"high", "medium"}:
+                        try:
+                            ai_qty = float(ai_result.get("total_quantity"))
+                            ai_unit = str(ai_result.get("original_unit_type", "")).replace("_", " ").strip().lower()
+                            ai_pref = str(ai_result.get("preferred_comparison_unit", "")).replace("_", " ").strip().lower()
+                            if ai_qty > 0 and ai_unit:
+                                qty = ai_qty
+                                unit_type = ai_unit
+                                if ai_pref:
+                                    preferred_comparison_unit = ai_pref
+                                err = ""
+                                final_source = "ai"
+                                ai_fallback_used += 1
+                        except Exception:
+                            pass
             converted_qty, converted_unit, conversion_err = convert_to_preferred_unit(qty, unit_type, preferred_comparison_unit)
             confidence = determine_unit_parse_confidence(pack_size, qty, unit_type, err or conversion_err)
+            if final_source == "ai" and ai_confidence in {"high", "medium", "low"}:
+                confidence = ai_confidence
             if confidence == "high":
                 high_conf += 1
             elif confidence == "medium":
@@ -1223,6 +1298,11 @@ def build_comparison_rows(
                         "confidence": confidence,
                         "review_required": required_review,
                         "review_optional": optional_review,
+                        "rule_parser_handled": rule_parser_handled,
+                        "ai_fallback_used": ai_used,
+                        "ai_confidence": ai_confidence if ai_confidence else "n/a",
+                        "ai_reason": ai_reason if ai_reason else "n/a",
+                        "unit_calculation_source": final_source,
                         "note": correction.get("note", "") if isinstance(correction, dict) else "",
                     }
                 )
@@ -1287,6 +1367,7 @@ def build_comparison_rows(
         "low_confidence_unit_parses": low_conf,
         "required_unit_reviews": required_reviews,
         "optional_unit_reviews": optional_reviews,
+        "ai_fallback_used": ai_fallback_used,
     }
 
     us_items = [entry for entry in parsed_entries if entry["vendor"] == "US Foods"]
