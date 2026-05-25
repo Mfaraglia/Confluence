@@ -360,9 +360,21 @@
     {% endif %}
 
     {% if review_stats %}
+      {% if not review_stats.ai_api_key_detected %}
+        <div class="errors" role="alert">
+          <strong>AI unit reasoning disabled — no API key configured.</strong>
+        </div>
+      {% endif %}
       <section class="debug" aria-label="Unit review summary">
         <h2>Unit Review Summary</h2>
+        <p><strong>OPENAI_API_KEY detected:</strong> {{ "Yes" if review_stats.ai_api_key_detected else "No" }}</p>
+        <p><strong>Processed by rule parser:</strong> {{ review_stats.items_processed_rule if review_stats else 0 }}</p>
+        <p><strong>Processed by AI fallback:</strong> {{ review_stats.items_processed_ai if review_stats else 0 }}</p>
+        <p><strong>Processed by user correction:</strong> {{ review_stats.items_processed_user_correction if review_stats else 0 }}</p>
         <p><strong>Total vendor items:</strong> {{ review_stats.total_vendor_items if review_stats else 0 }}</p>
+        <p><strong>High-confidence AI parses:</strong> {{ review_stats.ai_high_confidence_parses if review_stats else 0 }}</p>
+        <p><strong>Medium-confidence AI parses:</strong> {{ review_stats.ai_medium_confidence_parses if review_stats else 0 }}</p>
+        <p><strong>Low-confidence AI parses:</strong> {{ review_stats.ai_low_confidence_parses if review_stats else 0 }}</p>
         <p><strong>High-confidence unit parses:</strong> {{ review_stats.high_confidence_unit_parses if review_stats else 0 }}</p>
         <p><strong>Medium-confidence unit parses:</strong> {{ review_stats.medium_confidence_unit_parses if review_stats else 0 }}</p>
         <p><strong>Low-confidence unit parses:</strong> {{ review_stats.low_confidence_unit_parses if review_stats else 0 }}</p>
@@ -370,6 +382,39 @@
         <p><strong>Optional unit reviews:</strong> {{ review_stats.optional_unit_reviews if review_stats else 0 }}</p>
         <p><strong>AI fallback used:</strong> {{ review_stats.ai_fallback_used if review_stats else 0 }}</p>
         <p><strong>Displayed unit review cards:</strong> {{ debug_counters.displayed_unit_review_cards if debug_counters.displayed_unit_review_cards is not none else 0 }}</p>
+      </section>
+
+      <section class="debug" aria-label="AI unit reasoning debug">
+        <h2>AI Unit Reasoning Debug</h2>
+        <p><strong>Items sent to AI:</strong> {{ review_stats.ai_debug_items|length if review_stats else 0 }}</p>
+        {% if review_stats.ai_debug_items %}
+          {% for item in review_stats.ai_debug_items %}
+            <div class="debug-card">
+              <p><strong>{{ item.vendor_name }}</strong> | {{ item.description }}</p>
+              <p>Pack size text: {{ item.pack_size_text if item.pack_size_text else "N/A" }}</p>
+              <p>Prompt payload sent to AI:</p>
+              <pre>{{ item.prompt_payload | tojson(indent=2) }}</pre>
+              <p>Raw AI response:</p>
+              <pre>{{ item.raw_ai_response if item.raw_ai_response else "N/A" }}</pre>
+              <p>Parsed AI JSON result:</p>
+              <pre>{{ item.parsed_ai_json_result | tojson(indent=2) }}</pre>
+              <p>AI confidence: {{ item.ai_confidence }}</p>
+              <p>AI result accepted: {{ "Yes" if item.accepted else "No" }}</p>
+              <p>Reason if rejected: {{ item.rejected_reason if item.rejected_reason else "N/A" }}</p>
+            </div>
+          {% endfor %}
+        {% else %}
+          <p class="muted">No items were sent to AI in this run.</p>
+        {% endif %}
+
+        <p><strong>Items not sent to AI:</strong> {{ review_stats.ai_skipped_items|length if review_stats else 0 }}</p>
+        {% if review_stats.ai_skipped_items %}
+          <ul class="debug-list">
+            {% for item in review_stats.ai_skipped_items %}
+              <li><strong>{{ item.vendor_name }}</strong> | {{ item.description }} | reason: {{ item.reason }}</li>
+            {% endfor %}
+          </ul>
+        {% endif %}
       </section>
     {% endif %}
 
@@ -705,7 +750,7 @@
               <p>AI fallback used: {{ "yes" if item.ai_fallback_used else "no" }}</p>
               <p>AI confidence: {{ item.ai_confidence }}</p>
               <p>AI reason: {{ item.ai_reason }}</p>
-              <p>Final unit source: {{ item.unit_calculation_source }}</p>
+              <p><strong>source = {{ item.unit_calculation_source }}</strong></p>
 
               <input type="hidden" name="unit_review_key_{{ loop.index0 }}" value="{{ item.review_key }}">
               <input type="hidden" name="unit_vendor_{{ loop.index0 }}" value="{{ item.vendor_name }}">

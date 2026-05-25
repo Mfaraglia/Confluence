@@ -4,6 +4,7 @@ import io
 import json
 import os
 import re
+import urllib.request
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -482,13 +483,24 @@ def ai_unit_reasoning(vendor_name: str, description: str, pack_size_text: str, c
     )
     try:
         with urllib.request.urlopen(request_data, timeout=12) as response:
-            response_payload = json.loads(response.read().decode("utf-8"))
+            raw_text = response.read().decode("utf-8")
+            response_payload = json.loads(raw_text)
         content = response_payload.get("choices", [{}])[0].get("message", {}).get("content", "{}")
         parsed = json.loads(content)
         parsed["used"] = True
+        parsed["debug_prompt_payload"] = payload
+        parsed["debug_raw_response"] = raw_text
+        parsed["debug_parsed_json"] = parsed.copy()
         return parsed
     except Exception as exc:
-        return {"used": False, "confidence": "low", "reason": f"AI fallback failed: {exc}"}
+        return {
+            "used": False,
+            "confidence": "low",
+            "reason": f"AI fallback failed: {exc}",
+            "debug_prompt_payload": payload,
+            "debug_raw_response": "",
+            "debug_parsed_json": {},
+        }
 
 
 # Build a simple cleaned description for matching similar products across files.
@@ -1180,6 +1192,15 @@ def build_comparison_rows(
     required_reviews = 0
     optional_reviews = 0
     ai_fallback_used = 0
+    ai_high_conf = 0
+    ai_medium_conf = 0
+    ai_low_conf = 0
+    ai_debug_items: List[Dict[str, Any]] = []
+    ai_skipped_items: List[Dict[str, Any]] = []
+    rule_source_count = 0
+    ai_source_count = 0
+    user_correction_source_count = 0
+    api_key_configured = bool(os.environ.get("OPENAI_API_KEY", "").strip())
     for group_key, prices in sorted(combined.items(), key=lambda item: item[1]["display_description"].lower()):
         vendor_prices = {
             "Sysco": prices["sysco"],
@@ -1230,6 +1251,14 @@ def build_comparison_rows(
                     ai_used = bool(ai_result.get("used"))
                     ai_reason = str(ai_result.get("reason", ""))
                     ai_confidence = str(ai_result.get("confidence", "low")).strip().lower()
+                    if ai_confidence == "high":
+                        ai_high_conf += 1
+                    elif ai_confidence == "medium":
+                        ai_medium_conf += 1
+                    else:
+                        ai_low_conf += 1
+                    ai_acceptance = False
+                    ai_rejection_reason = ""
                     if ai_used and ai_confidence in {"high", "medium"}:
                         try:
                             ai_qty = float(ai_result.get("total_quantity"))
@@ -1243,8 +1272,42 @@ def build_comparison_rows(
                                 err = ""
                                 final_source = "ai"
                                 ai_fallback_used += 1
+                                ai_acceptance = True
                         except Exception:
-                            pass
+                            ai_rejection_reason = "AI result parse/validation failed."
+                    else:
+                        ai_rejection_reason = "AI returned low confidence or was unavailable."
+                    ai_debug_items.append(
+                        {
+                            "vendor_name": vendor_name,
+                            "description": str(prices["display_description"]),
+                            "pack_size_text": pack_size,
+                            "prompt_payload": ai_result.get("debug_prompt_payload", {}),
+                            "raw_ai_response": ai_result.get("debug_raw_response", ""),
+                            "parsed_ai_json_result": ai_result.get("debug_parsed_json", {}),
+                            "ai_confidence": ai_confidence if ai_confidence else "low",
+                            "accepted": ai_acceptance,
+                            "rejected_reason": ai_rejection_reason if not ai_acceptance else "",
+                        }
+                    )
+                else:
+                    ai_skipped_items.append(
+                        {
+                            "vendor_name": vendor_name,
+                            "description": str(prices["display_description"]),
+                            "pack_size_text": pack_size,
+                            "reason": "Rule parser and conversion were high-confidence; AI fallback not needed.",
+                        }
+                    )
+            else:
+                ai_skipped_items.append(
+                    {
+                        "vendor_name": vendor_name,
+                        "description": str(prices["display_description"]),
+                        "pack_size_text": pack_size,
+                        "reason": "User correction already exists; AI fallback skipped.",
+                    }
+                )
             converted_qty, converted_unit, conversion_err = convert_to_preferred_unit(qty, unit_type, preferred_comparison_unit)
             confidence = determine_unit_parse_confidence(pack_size, qty, unit_type, err or conversion_err)
             if final_source == "ai" and ai_confidence in {"high", "medium", "low"}:
@@ -1306,6 +1369,12 @@ def build_comparison_rows(
                         "note": correction.get("note", "") if isinstance(correction, dict) else "",
                     }
                 )
+            if final_source == "ai":
+                ai_source_count += 1
+            elif final_source == "user correction":
+                user_correction_source_count += 1
+            else:
+                rule_source_count += 1
 
         valid_units = {
             vendor: data
@@ -1368,6 +1437,15 @@ def build_comparison_rows(
         "required_unit_reviews": required_reviews,
         "optional_unit_reviews": optional_reviews,
         "ai_fallback_used": ai_fallback_used,
+        "ai_api_key_detected": api_key_configured,
+        "items_processed_rule": rule_source_count,
+        "items_processed_ai": ai_source_count,
+        "items_processed_user_correction": user_correction_source_count,
+        "ai_high_confidence_parses": ai_high_conf,
+        "ai_medium_confidence_parses": ai_medium_conf,
+        "ai_low_confidence_parses": ai_low_conf,
+        "ai_debug_items": ai_debug_items[:60],
+        "ai_skipped_items": ai_skipped_items[:60],
     }
 
     us_items = [entry for entry in parsed_entries if entry["vendor"] == "US Foods"]
