@@ -1241,11 +1241,18 @@ def build_comparison_rows(
             # AI fallback is only used when rule parsing is uncertain and user correction does not exist.
             if final_source != "user correction":
                 converted_probe, converted_unit_probe, conversion_probe_err = convert_to_preferred_unit(qty, unit_type, preferred_comparison_unit)
+                pre_ai_confidence = determine_unit_parse_confidence(pack_size, qty, unit_type, err or conversion_probe_err)
                 suspicious_probe = (
                     case_price is not None and converted_probe is not None and converted_probe > 0 and
                     ((float(case_price) / float(converted_probe)) <= 0 or (float(case_price) / float(converted_probe)) > 1000)
                 )
-                ai_needed = (not rule_parser_handled) or bool(conversion_probe_err) or suspicious_probe or not unit_type
+                # Only run AI for uncertain/suspicious unit parsing, not for high-confidence rows.
+                ai_needed = (
+                    (pre_ai_confidence == "low")
+                    or bool(conversion_probe_err)
+                    or suspicious_probe
+                    or (not unit_type)
+                )
                 if ai_needed:
                     ai_result = ai_unit_reasoning(vendor_name, str(prices["display_description"]), pack_size, case_price)
                     ai_used = bool(ai_result.get("used"))
@@ -1296,7 +1303,7 @@ def build_comparison_rows(
                             "vendor_name": vendor_name,
                             "description": str(prices["display_description"]),
                             "pack_size_text": pack_size,
-                            "reason": "Rule parser and conversion were high-confidence; AI fallback not needed.",
+                            "reason": f"AI skipped: pre-AI confidence is '{pre_ai_confidence}' and parse is not suspicious.",
                         }
                     )
             else:
